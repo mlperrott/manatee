@@ -8,6 +8,8 @@ Manatee presents Mermaid diagrams for technical discussions and management prese
 
 **Presentation override**: A saved adjustment to a diagram's appearance, such as a manually chosen position, spacing or styling.
 
+**Unmatched presentation override**: A preserved presentation override whose referenced authored element identity is absent from the current semantic source.
+
 **Manual position**: A position chosen by the diagram's author that is preserved when the semantic source is edited.
 
 **Automatic layout**: The placement computed for diagram elements that do not have manual positions.
