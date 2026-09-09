@@ -7,7 +7,7 @@ const coreDirectory = fileURLToPath(new URL("../src/core/", import.meta.url));
 const forbiddenImports =
   /from\s+["'](?:solid-js|@solidjs\/web)(?:\/[^"']*)?["']/;
 const forbiddenDomGlobals =
-  /\b(?:document|window|HTMLElement|SVGElement|ResizeObserver|MutationObserver)\b/;
+  /\b(?:document|window|HTMLElement|SVGElement|ResizeObserver|MutationObserver)\b/u;
 
 async function sourceFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -24,9 +24,10 @@ async function sourceFiles(directory) {
   return files;
 }
 
+const files = await sourceFiles(coreDirectory);
 const violations = [];
 
-for (const path of await sourceFiles(coreDirectory)) {
+for (const path of files) {
   const source = await readFile(path, "utf8");
   const name = relative(root, path);
 
@@ -34,7 +35,11 @@ for (const path of await sourceFiles(coreDirectory)) {
     violations.push(`${name}: core must not import Solid or its DOM runtime`);
   }
 
-  if (forbiddenDomGlobals.test(source)) {
+  const code = source.replace(
+    /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/gu,
+    " ",
+  );
+  if (forbiddenDomGlobals.test(code)) {
     violations.push(`${name}: core must not reference browser DOM globals`);
   }
 }

@@ -1,9 +1,23 @@
 import type { DocumentHint, DocumentSnapshot, SourcePatch } from "./types";
 
-export interface DocumentCommand {
-  readonly type: string;
-  readonly payload?: unknown;
-}
+export type SourceTransactionReason = "visual" | "cleanup" | "reset-layout";
+
+export type DocumentCommand =
+  | {
+      readonly type: "replace-source";
+      readonly source: string;
+    }
+  | {
+      readonly type: "apply-patches";
+      readonly patches: readonly SourcePatch[];
+      readonly reason: SourceTransactionReason;
+    }
+  | {
+      readonly type: "select";
+      readonly elementId: string | undefined;
+    }
+  | { readonly type: "undo" }
+  | { readonly type: "redo" };
 
 export interface CommandResult<Snapshot extends DocumentSnapshot> {
   readonly snapshot: Snapshot;

@@ -34,11 +34,11 @@ export interface DocumentSnapshot<
 > {
   readonly kind: DocumentKind;
   readonly source: string;
-  readonly semanticModel: SemanticModel;
-  readonly presentationModel: PresentationModel;
-  readonly view: View;
+  readonly semanticModel: SemanticModel | undefined;
+  readonly presentationModel: PresentationModel | undefined;
+  readonly view: View | undefined;
   readonly diagnostics: readonly DocumentDiagnostic[];
-  readonly selectedElementId?: string;
+  readonly selectedElementId: string | undefined;
   readonly valid: boolean;
   readonly previewOutdated: boolean;
   readonly dirty: boolean;
@@ -49,3 +49,30 @@ export interface SourcePatch {
   readonly range: SourceRange;
   readonly replacement: string;
 }
+
+export interface ValidDocument<
+  SemanticModel = unknown,
+  PresentationModel = unknown,
+  View = unknown,
+> {
+  readonly valid: true;
+  readonly kind: DocumentKind;
+  readonly semanticModel: SemanticModel;
+  readonly presentationModel: PresentationModel;
+  readonly view: View;
+  readonly diagnostics: readonly DocumentDiagnostic[];
+  readonly visualEditing?: boolean;
+  readonly imageExport?: boolean;
+}
+
+export interface InvalidDocument {
+  readonly valid: false;
+  readonly kind: DocumentKind;
+  readonly diagnostics: readonly DocumentDiagnostic[];
+}
+
+export type ParsedDocument<
+  SemanticModel = unknown,
+  PresentationModel = unknown,
+  View = unknown,
+> = ValidDocument<SemanticModel, PresentationModel, View> | InvalidDocument;
