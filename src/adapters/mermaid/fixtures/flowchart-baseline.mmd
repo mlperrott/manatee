@@ -1,0 +1,37 @@
+---
+title: Flowchart baseline
+manatee:
+  version: 1
+  mystery: preserved
+---
+flowchart RL
+classDef critical fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#111827,font-weight:700
+subgraph outer[Outer]
+direction TB
+subgraph inner[Inner]
+A["`**Rectangle**<br/>_label_`"]:::critical
+B(Rounded)
+C([Stadium])
+D[[Subroutine]]
+E[(Database)]
+F((Circle))
+G>Asymmetric]
+H{Diamond}
+I{{Hexagon}}
+J[/Parallelogram/]
+K[\Alternate\]
+L[/Trapezoid\]
+M[\Inverse/]
+end
+N[Outside]
+end
+A e1@-->|solid label| B
+B -. dotted .-> C
+C ==> D
+D --o E
+E --x F
+F --- N
+G <--> N
+outer --> N
+style N fill:#ffffff,stroke:#2563eb,color:#111827
+linkStyle 0 stroke:#2563eb,stroke-width:2px

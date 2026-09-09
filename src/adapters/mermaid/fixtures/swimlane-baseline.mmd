@@ -1,0 +1,9 @@
+swimlane-beta LR
+subgraph sales[Sales]
+direction TB
+lead[Lead] --> qualify{Qualified?}
+end
+subgraph delivery[Delivery]
+plan[Plan] --> ship[Ship]
+end
+qualify cross@-->|handoff| plan

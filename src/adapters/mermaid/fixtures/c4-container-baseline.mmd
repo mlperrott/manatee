@@ -1,0 +1,11 @@
+C4Container
+Person(user, "Customer")
+System_Boundary(platform, "Platform") {
+  Container(web, "Web app", "TypeScript", "Serves UI")
+  ContainerDb(db, "Database", "PostgreSQL", "Stores data")
+  ContainerQueue(queue, "Queue", "Kafka", "Carries events")
+  Container_Ext(search, "Search", "SaaS", "External search")
+}
+Rel_D(user, web, "Uses", "HTTPS", "Views diagrams")
+Rel(web, db, "Reads", "SQL")
+Rel(web, queue, "Publishes", "Events")

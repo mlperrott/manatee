@@ -1,0 +1,11 @@
+C4Context
+Enterprise_Boundary(company, "Company") {
+  Person(user, "Customer", "Places orders")
+  Person_Ext(admin, "Admin", "External operator")
+  System(ordering, "Ordering", "Handles orders")
+  SystemDb(records, "Records", "Stores records")
+  SystemQueue(events, "Events", "Publishes events")
+}
+System_Ext(payments, "Payments", "External payments")
+Rel_R(user, ordering, "Uses", "HTTPS", "Places an order")
+Rel(ordering, payments, "Charges", "HTTPS", "Requests payment")
