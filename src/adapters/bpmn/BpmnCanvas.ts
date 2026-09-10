@@ -133,6 +133,10 @@ export class BpmnCanvas implements Disposable {
     return element ? geometry(element) : undefined;
   }
 
+  setZoom(level: number): void {
+    this.#requireModeler().get("canvas").zoom(level);
+  }
+
   async exportSvg(): Promise<string> {
     const { svg } = await this.#requireModeler().saveSVG();
     if (!svg) throw new Error("bpmn-js did not produce SVG output.");

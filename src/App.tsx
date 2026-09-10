@@ -1,54 +1,385 @@
-import { createEffect, createMemo, onSettled, Show } from "solid-js";
+import {
+  createMemo,
+  createSignal,
+  lazy,
+  Loading,
+  onSettled,
+  Show,
+} from "solid-js";
 import { createStore } from "solid-js";
 
+import type {
+  BpmnCanvas,
+  BpmnGeometryChange,
+} from "./adapters/bpmn/BpmnCanvas";
+import type {
+  BpmnDocumentAdapter,
+  BpmnDocumentSnapshot,
+} from "./adapters/bpmn/BpmnDocumentAdapter";
+import {
+  MermaidDocumentAdapter,
+  MermaidLayout,
+  renderMermaidSvg,
+  type MermaidDocumentSnapshot,
+  type MermaidScene,
+} from "./adapters/mermaid";
 import { initialEditorUiState, sourceToggleLabel } from "./app/editorUiState";
+import { MermaidSurface } from "./app/MermaidSurface";
 import { StatusNotice } from "./app/StatusNotice";
+import {
+  findUnmatchedMetadata,
+  patchManateeMetadata,
+} from "./core/metadata/manateeMetadata";
+import type { MetadataEdit, MetadataValue } from "./core/metadata/types";
 import "./app.css";
+
+const BpmnSurface = lazy(async () => {
+  const module = await import("./adapters/bpmn/BpmnSurface");
+  return { default: module.BpmnSurface };
+});
+
+const mermaidExample = `flowchart LR
+  request[Request received] --> review{Approved?}
+  review -->|Yes| fulfil[Fulfil request]
+  review -->|No| revise[Request changes]
+  revise --> review
+  fulfil --> done([Complete])
+`;
+
+type ActiveAdapter = MermaidDocumentAdapter | BpmnDocumentAdapter;
+type ActiveSnapshot = MermaidDocumentSnapshot | BpmnDocumentSnapshot;
+
+function selectedLabel(current: ActiveSnapshot | undefined): string {
+  const id = current?.selectedElementId;
+  if (!current || !id) return "No selection";
+  if (current.kind === "bpmn") {
+    const bpmn = current as BpmnDocumentSnapshot;
+    return (
+      bpmn.semanticModel?.elements.find((item) => item.id === id)?.name || id
+    );
+  }
+  const mermaid = current as MermaidDocumentSnapshot;
+  return (
+    mermaid.semanticModel?.nodes.find((item) => item.id === id)?.label ??
+    mermaid.semanticModel?.groups.find((item) => item.id === id)?.label ??
+    mermaid.semanticModel?.relationships.find((item) => item.id === id)
+      ?.label ??
+    id
+  );
+}
 
 export default function App() {
   const [ui, setUi] = createStore(initialEditorUiState());
-  const toggleLabel = createMemo(() => sourceToggleLabel(ui.sourceOpen));
+  const [snapshot, setSnapshot] = createSignal<ActiveSnapshot>();
+  const [source, setSource] = createSignal(mermaidExample);
+  const [scene, setScene] = createSignal<MermaidScene>();
+  const [zoom, setZoom] = createSignal(1);
+  const [fill, setFill] = createSignal("#e0f0ec");
+  const [stroke, setStroke] = createSignal("#2d817c");
+  const [attributeName, setAttributeName] = createSignal("owner");
+  const [attributeValue, setAttributeValue] = createSignal("operations");
+  const layout = new MermaidLayout();
+  let adapter: ActiveAdapter = new MermaidDocumentAdapter();
+  let bpmnCanvas: BpmnCanvas | undefined;
   let stage: HTMLElement | undefined;
+  let sourceTimer: ReturnType<typeof setTimeout> | undefined;
+  let revision = 0;
+  let ignoreBpmnGeometry = true;
 
-  const toggleSource = () => {
+  const svg = createMemo(() => {
+    const current = snapshot();
+    const currentScene = scene();
+    return current?.kind === "mermaid" && currentScene
+      ? renderMermaidSvg(currentScene, {
+          ...(current.selectedElementId
+            ? { selectedElementId: current.selectedElementId }
+            : {}),
+          outdated: current.previewOutdated,
+          title: "Manatee Mermaid diagram",
+        })
+      : "";
+  });
+
+  const fail = (error: unknown) => {
     setUi((draft) => {
-      draft.sourceOpen = !draft.sourceOpen;
-    });
-  };
-
-  const toggleInspector = () => {
-    setUi((draft) => {
-      draft.inspectorOpen = !draft.inspectorOpen;
-    });
-  };
-
-  createEffect(
-    () => ui.sourceOpen,
-    (sourceOpen) => {
-      document.documentElement.dataset.sourcePanel = sourceOpen
-        ? "open"
-        : "closed";
-
-      return () => {
-        delete document.documentElement.dataset.sourcePanel;
+      draft.status = {
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
       };
-    },
-  );
+    });
+  };
+
+  const present = async (next: ActiveSnapshot) => {
+    const currentRevision = ++revision;
+    setSnapshot(next);
+    setSource(next.source);
+    if (next.kind === "mermaid" && next.semanticModel) {
+      const mermaid = next as MermaidDocumentSnapshot;
+      const nextScene = await layout.layout({
+        model: mermaid.semanticModel!,
+        metadata: mermaid.presentationModel?.metadata,
+      });
+      if (revision === currentRevision) setScene(nextScene);
+    } else if (
+      next.kind === "bpmn" &&
+      next.valid &&
+      bpmnCanvas?.source() !== next.source
+    ) {
+      const bpmn = next as BpmnDocumentSnapshot;
+      ignoreBpmnGeometry = true;
+      await bpmnCanvas?.importSource(next.source, bpmn.presentationModel);
+      queueMicrotask(() => {
+        ignoreBpmnGeometry = false;
+      });
+    }
+    setUi((draft) => {
+      draft.status = { kind: "ready" };
+    });
+  };
+
+  const execute = async (command: Parameters<ActiveAdapter["execute"]>[0]) => {
+    try {
+      const result = await adapter.execute(command);
+      await present(result.snapshot as ActiveSnapshot);
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const openMermaid = async () => {
+    if ("dispose" in adapter) adapter.dispose();
+    adapter = new MermaidDocumentAdapter();
+    bpmnCanvas = undefined;
+    setZoom(1);
+    setUi((draft) => {
+      draft.status = { kind: "loading", message: "Opening Mermaid example…" };
+    });
+    await present(await adapter.open(mermaidExample, { kind: "mermaid" }));
+  };
+
+  const openBpmn = async () => {
+    if ("dispose" in adapter) adapter.dispose();
+    setScene(undefined);
+    bpmnCanvas = undefined;
+    setZoom(1);
+    setUi((draft) => {
+      draft.status = { kind: "loading", message: "Opening BPMN example…" };
+    });
+    try {
+      const [{ BpmnDocumentAdapter }, fixture] = await Promise.all([
+        import("./adapters/bpmn/BpmnDocumentAdapter"),
+        import("./adapters/bpmn/fixtures/process-missing-di.bpmn?raw"),
+      ]);
+      const bpmn = new BpmnDocumentAdapter();
+      adapter = bpmn;
+      await bpmn.open(fixture.default, { kind: "bpmn" });
+      await present(await bpmn.recoverMissingDi());
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const replaceSource = (value: string) => {
+    setSource(value);
+    if (sourceTimer) clearTimeout(sourceTimer);
+    sourceTimer = setTimeout(() => {
+      void adapter
+        .replaceSource(value)
+        .then((next) => present(next as ActiveSnapshot))
+        .catch(fail);
+    }, 180);
+  };
+
+  const editMermaid = async (edits: readonly MetadataEdit[]) => {
+    if (!(adapter instanceof MermaidDocumentAdapter)) return;
+    const patched = patchManateeMetadata(adapter.snapshot().source, edits);
+    await execute({
+      type: "apply-patches",
+      patches: patched.patches,
+      reason: "visual",
+    });
+  };
+
+  const nudge = async (id: string, dx: number, dy: number) => {
+    const currentScene = scene();
+    if (!currentScene) return;
+    const node = currentScene.nodes.find((item) => item.id === id);
+    const group = currentScene.groups.find((item) => item.id === id);
+    const item = node ?? group;
+    if (!item) return;
+    await editMermaid([
+      {
+        type: "set",
+        path: ["elements", node ? "nodes" : "groups", id, "position"],
+        value: {
+          x: Math.max(0, Math.round(item.x + dx)),
+          y: Math.max(0, Math.round(item.y + dy)),
+        },
+      },
+    ]);
+  };
+
+  const styleSelection = async () => {
+    const current = snapshot();
+    const id = current?.selectedElementId;
+    if (!current || !id || !current.commands.visualEditing) return;
+    if (current.kind === "bpmn" && "style" in adapter) {
+      try {
+        await present(
+          (await adapter.style(id, { fill: fill(), stroke: stroke() }))
+            .snapshot,
+        );
+      } catch (error) {
+        fail(error);
+      }
+      return;
+    }
+    if (current.kind !== "mermaid") return;
+    const mermaid = current as MermaidDocumentSnapshot;
+    const node = mermaid.semanticModel?.nodes.some((item) => item.id === id);
+    const group = mermaid.semanticModel?.groups.some((item) => item.id === id);
+    if (node || group) {
+      await editMermaid([
+        {
+          type: "set",
+          path: ["elements", node ? "nodes" : "groups", id, "style", "fill"],
+          value: fill(),
+        },
+        {
+          type: "set",
+          path: [
+            "elements",
+            node ? "nodes" : "groups",
+            id,
+            "style",
+            "outline",
+            "color",
+          ],
+          value: stroke(),
+        },
+      ]);
+    } else {
+      await editMermaid([
+        {
+          type: "set",
+          path: ["elements", "relationships", "byId", id, "style", "color"],
+          value: stroke(),
+        },
+      ]);
+    }
+  };
+
+  const resetLayout = async () => {
+    const current = snapshot();
+    if (!current?.commands.visualEditing) return;
+    if (current.kind === "bpmn" && "resetLayout" in adapter) {
+      try {
+        await present((await adapter.resetLayout()).snapshot);
+      } catch (error) {
+        fail(error);
+      }
+      return;
+    }
+    if (current.kind === "mermaid" && current.semanticModel) {
+      const mermaid = current as MermaidDocumentSnapshot;
+      await editMermaid([
+        ...mermaid.semanticModel!.nodes.map(({ id }) => ({
+          type: "remove" as const,
+          path: ["elements", "nodes", id, "position"] as const,
+        })),
+        ...mermaid.semanticModel!.groups.map(({ id }) => ({
+          type: "remove" as const,
+          path: ["elements", "groups", id, "position"] as const,
+        })),
+      ]);
+    }
+  };
+
+  const cleanUnused = async () => {
+    const current = snapshot();
+    if (current?.kind !== "mermaid" || !current.semanticModel) return;
+    const mermaid = current as MermaidDocumentSnapshot;
+    const model = mermaid.semanticModel!;
+    const unused = findUnmatchedMetadata(mermaid.presentationModel?.metadata, {
+      nodes: new Set(model.nodes.map(({ id }) => id)),
+      groups: new Set(
+        model.groups.filter(({ kind }) => kind !== "lane").map(({ id }) => id),
+      ),
+      lanes: new Set(
+        model.groups.filter(({ kind }) => kind === "lane").map(({ id }) => id),
+      ),
+      relationships: new Set(model.relationships.map(({ id }) => id)),
+      relationshipMatchers: new Set(),
+    });
+    if (unused.edits.length > 0) await editMermaid(unused.edits);
+  };
+
+  const useAutomaticPosition = async () => {
+    const current = snapshot();
+    const id = current?.selectedElementId;
+    if (current?.kind !== "mermaid" || !id) return;
+    const mermaid = current as MermaidDocumentSnapshot;
+    const category = mermaid.semanticModel?.nodes.some((item) => item.id === id)
+      ? "nodes"
+      : "groups";
+    await editMermaid([
+      { type: "remove", path: ["elements", category, id, "position"] },
+    ]);
+  };
+
+  const geometryChanged = (changes: readonly BpmnGeometryChange[]) => {
+    const current = snapshot() as BpmnDocumentSnapshot | undefined;
+    const id = current?.selectedElementId;
+    if (
+      ignoreBpmnGeometry ||
+      current?.kind !== "bpmn" ||
+      !id ||
+      !("moveOrResize" in adapter)
+    )
+      return;
+    const change = changes.find((item) => item.elementId === id);
+    const shapeBefore = current.presentationModel?.shapes[id]?.bounds;
+    const edgeBefore = current.presentationModel?.edges[id]?.waypoints;
+    const operation = change?.bounds
+      ? shapeBefore &&
+        shapeBefore.x === change.bounds.x &&
+        shapeBefore.y === change.bounds.y &&
+        shapeBefore.width === change.bounds.width &&
+        shapeBefore.height === change.bounds.height
+        ? undefined
+        : adapter.moveOrResize(id, change.bounds)
+      : change?.waypoints &&
+          JSON.stringify(edgeBefore) !== JSON.stringify(change.waypoints)
+        ? adapter.route(id, change.waypoints)
+        : undefined;
+    if (!operation) return;
+    ignoreBpmnGeometry = true;
+    void operation
+      .then(({ snapshot: next }) => present(next))
+      .catch(fail)
+      .finally(() => {
+        ignoreBpmnGeometry = false;
+      });
+  };
 
   onSettled(() => {
+    void openMermaid();
     if (!stage) return;
-
-    const updateStageWidth = () => {
-      const width = Math.round(stage?.getBoundingClientRect().width ?? 0);
+    const measure = () =>
       setUi((draft) => {
-        draft.stageWidth = width;
+        draft.stageWidth = Math.round(
+          stage?.getBoundingClientRect().width ?? 0,
+        );
       });
-    };
-    const observer = new ResizeObserver(updateStageWidth);
+    const observer = new ResizeObserver(measure);
     observer.observe(stage);
-    updateStageWidth();
-
-    return () => observer.disconnect();
+    measure();
+    return () => {
+      observer.disconnect();
+      if (sourceTimer) clearTimeout(sourceTimer);
+      layout.dispose();
+      if ("dispose" in adapter) adapter.dispose();
+    };
   });
 
   return (
@@ -56,7 +387,6 @@ export default function App() {
       <a class="skip-link" href="#workspace">
         Skip to workspace
       </a>
-
       <header class="topbar">
         <div class="brand" aria-label="Manatee home">
           <span class="brand__mark" aria-hidden="true">
@@ -67,17 +397,42 @@ export default function App() {
             <small>Diagram studio</small>
           </span>
         </div>
-
         <div class="document-title" aria-label="Current document">
-          <span class="document-title__dot" aria-hidden="true" />
-          Untitled diagram
+          <span
+            class={{
+              "document-title__dot": true,
+              "document-title__dot--error": snapshot()?.valid === false,
+            }}
+            aria-hidden="true"
+          />
+          {snapshot()?.kind === "bpmn"
+            ? "Review process.bpmn"
+            : "Request flow.mmd"}
+          <Show when={snapshot()?.dirty}>
+            <span class="dirty-badge">Edited</span>
+          </Show>
         </div>
-
         <nav class="topbar__actions" aria-label="Document actions">
-          <button class="button button--quiet" type="button" disabled>
-            Open
+          <button
+            class="button button--quiet"
+            type="button"
+            onClick={() => void openMermaid()}
+          >
+            Mermaid example
           </button>
-          <button class="button button--quiet" type="button" disabled>
+          <button
+            class="button button--quiet"
+            type="button"
+            onClick={() => void openBpmn()}
+          >
+            BPMN example
+          </button>
+          <button
+            class="button button--quiet"
+            type="button"
+            disabled
+            title="Export arrives with file workflows"
+          >
             Export
           </button>
           <button
@@ -85,15 +440,17 @@ export default function App() {
             type="button"
             aria-expanded={ui.sourceOpen ? "true" : "false"}
             aria-controls="source-panel"
-            onClick={toggleSource}
+            onClick={() =>
+              setUi((draft) => {
+                draft.sourceOpen = !draft.sourceOpen;
+              })
+            }
           >
-            {toggleLabel()}
+            {sourceToggleLabel(ui.sourceOpen)}
           </button>
         </nav>
       </header>
-
       <StatusNotice status={ui.status} />
-
       <main
         id="workspace"
         class={{ workspace: true, "workspace--source-open": ui.sourceOpen }}
@@ -105,19 +462,40 @@ export default function App() {
                 <span class="eyebrow">Source</span>
                 <strong>Diagram text</strong>
               </span>
-              <span class="file-badge">MERMAID / BPMN</span>
+              <span class="file-badge">{snapshot()?.kind?.toUpperCase()}</span>
             </div>
             <textarea
               aria-label="Diagram source"
-              disabled
-              placeholder="The document engine will attach here."
+              value={source()}
+              spellcheck={false}
+              onInput={(event) => replaceSource(event.currentTarget.value)}
             />
-            <p class="panel-note">
-              Source editing becomes available when a document is open.
-            </p>
+            <div
+              class="source-status"
+              role="status"
+              data-valid={snapshot()?.valid ? "true" : "false"}
+            >
+              <strong>
+                {snapshot()?.valid ? "Preview current" : "Source has errors"}
+              </strong>
+              <span>
+                {snapshot()?.valid
+                  ? "Visual edits are available."
+                  : "The canvas keeps the last valid preview."}
+              </span>
+            </div>
+            <Show when={(snapshot()?.diagnostics.length ?? 0) > 0}>
+              <ul class="diagnostics" aria-label="Document diagnostics">
+                {snapshot()?.diagnostics.map((item) => (
+                  <li data-severity={item.severity}>
+                    <strong>{item.severity}</strong>
+                    {item.message}
+                  </li>
+                ))}
+              </ul>
+            </Show>
           </aside>
         </Show>
-
         <section
           class="stage"
           aria-label="Diagram canvas"
@@ -127,48 +505,141 @@ export default function App() {
         >
           <div class="stage-toolbar" aria-label="Canvas controls">
             <span class="stage-toolbar__label">
-              Canvas
+              Canvas{" "}
               <Show when={ui.stageWidth > 0}>
-                <span class="stage-toolbar__measure">
-                  {ui.stageWidth}px workspace
-                </span>
+                <span class="stage-toolbar__measure">{ui.stageWidth}px</span>
               </Show>
             </span>
+            <div class="command-bar" aria-label="Edit controls">
+              <button
+                type="button"
+                onClick={() => void execute({ type: "undo" })}
+                disabled={!snapshot()?.commands.undo}
+                title={
+                  snapshot()?.commands.undo
+                    ? "Undo last edit"
+                    : "Nothing to undo"
+                }
+              >
+                Undo
+              </button>
+              <button
+                type="button"
+                onClick={() => void execute({ type: "redo" })}
+                disabled={!snapshot()?.commands.redo}
+                title={
+                  snapshot()?.commands.redo
+                    ? "Redo last edit"
+                    : "Nothing to redo"
+                }
+              >
+                Redo
+              </button>
+              <button
+                type="button"
+                onClick={() => void resetLayout()}
+                disabled={!snapshot()?.commands.visualEditing}
+              >
+                Reset layout
+              </button>
+            </div>
             <div class="segmented" aria-label="Zoom controls">
-              <button type="button" disabled aria-label="Zoom out">
+              <button
+                type="button"
+                aria-label="Zoom out"
+                onClick={() => {
+                  const next = Math.max(0.5, zoom() - 0.1);
+                  setZoom(next);
+                  bpmnCanvas?.setZoom(next);
+                }}
+              >
                 −
               </button>
-              <span>100%</span>
-              <button type="button" disabled aria-label="Zoom in">
+              <span>{Math.round(zoom() * 100)}%</span>
+              <button
+                type="button"
+                aria-label="Zoom in"
+                onClick={() => {
+                  const next = Math.min(2, zoom() + 0.1);
+                  setZoom(next);
+                  bpmnCanvas?.setZoom(next);
+                }}
+              >
                 +
               </button>
             </div>
           </div>
-
-          <div class="canvas-empty">
-            <div class="canvas-empty__glyph" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
-            <p class="eyebrow">Ready for a document</p>
-            <h1>Turn diagram source into a clear story.</h1>
-            <p>
-              Open a Mermaid or BPMN file to begin. Your source stays portable
-              while Manatee manages its presentation.
-            </p>
-            <button class="button button--primary" type="button" disabled>
-              Open a diagram
-            </button>
-          </div>
-
+          <Show
+            when={snapshot()}
+            fallback={<div class="canvas-loading">Opening diagram…</div>}
+          >
+            <Show
+              when={snapshot()?.kind === "mermaid"}
+              fallback={
+                <Loading
+                  fallback={
+                    <div class="canvas-loading">Loading BPMN canvas…</div>
+                  }
+                >
+                  <BpmnSurface
+                    source={source()}
+                    {...((snapshot() as BpmnDocumentSnapshot | undefined)
+                      ?.presentationModel
+                      ? {
+                          presentation: (snapshot() as BpmnDocumentSnapshot)
+                            .presentationModel!,
+                        }
+                      : {})}
+                    onSelectionChange={(id) =>
+                      void execute({ type: "select", elementId: id })
+                    }
+                    onGeometryChange={geometryChanged}
+                    onReady={(canvas) => {
+                      bpmnCanvas = canvas;
+                      ignoreBpmnGeometry = false;
+                    }}
+                    onError={fail}
+                  />
+                </Loading>
+              }
+            >
+              <MermaidSurface
+                svg={svg()}
+                zoom={zoom()}
+                disabled={!snapshot()?.commands.visualEditing}
+                selectedElementId={snapshot()?.selectedElementId}
+                onSelect={(id) =>
+                  void execute({ type: "select", elementId: id })
+                }
+                onNudge={(id, dx, dy) => void nudge(id, dx, dy)}
+              />
+            </Show>
+          </Show>
           <div class="stage-footer">
-            <span>Canvas ready</span>
-            <span>Local browser workspace</span>
+            <span>
+              {snapshot()?.previewOutdated
+                ? "Last valid preview"
+                : "Canvas current"}
+            </span>
+            <span>{snapshot()?.kind === "bpmn" ? "BPMN 2.0" : "Mermaid"}</span>
           </div>
         </section>
-
-        <Show when={ui.inspectorOpen}>
+        <Show
+          when={ui.inspectorOpen}
+          fallback={
+            <button
+              class="inspector-restore"
+              type="button"
+              onClick={() =>
+                setUi((draft) => {
+                  draft.inspectorOpen = true;
+                })
+              }
+            >
+              Show inspector
+            </button>
+          }
+        >
           <aside class="inspector" aria-label="Inspector">
             <div class="panel-heading">
               <span>
@@ -179,52 +650,190 @@ export default function App() {
                 class="icon-button"
                 type="button"
                 aria-label="Close inspector"
-                onClick={toggleInspector}
+                onClick={() =>
+                  setUi((draft) => {
+                    draft.inspectorOpen = false;
+                  })
+                }
               >
                 ×
               </button>
             </div>
-
-            <div class="inspector-empty">
-              <span class="inspector-empty__icon" aria-hidden="true" />
-              <strong>No selection</strong>
-              <p>Select an element to adjust its position and appearance.</p>
-            </div>
-
-            <fieldset disabled>
-              <legend>Layout</legend>
-              <label>
-                Node spacing
-                <input type="range" min="24" max="96" value="48" />
-              </label>
-              <label>
-                Layer spacing
-                <input type="range" min="32" max="128" value="72" />
-              </label>
-            </fieldset>
-
-            <fieldset disabled>
-              <legend>Appearance</legend>
-              <div class="swatch-row">
-                <span>Fill</span>
-                <span class="swatch swatch--fill" />
+            <Show
+              when={snapshot()?.selectedElementId}
+              fallback={
+                <div class="inspector-empty">
+                  <span class="inspector-empty__icon" aria-hidden="true" />
+                  <strong>No selection</strong>
+                  <p>Select an element. Arrow keys move Mermaid elements.</p>
+                </div>
+              }
+            >
+              <div class="selection-summary">
+                <span class="eyebrow">Selected</span>
+                <strong>{selectedLabel(snapshot())}</strong>
+                <code>{snapshot()?.selectedElementId}</code>
               </div>
-              <div class="swatch-row">
-                <span>Outline</span>
-                <span class="swatch swatch--outline" />
-              </div>
-            </fieldset>
+              <fieldset disabled={!snapshot()?.commands.visualEditing}>
+                <legend>Appearance</legend>
+                <label>
+                  Fill{" "}
+                  <input
+                    aria-label="Fill colour"
+                    type="color"
+                    value={fill()}
+                    onInput={(event) => setFill(event.currentTarget.value)}
+                  />
+                </label>
+                <label>
+                  Outline{" "}
+                  <input
+                    aria-label="Outline colour"
+                    type="color"
+                    value={stroke()}
+                    onInput={(event) => setStroke(event.currentTarget.value)}
+                  />
+                </label>
+                <button
+                  class="button button--secondary"
+                  type="button"
+                  onClick={() => void styleSelection()}
+                >
+                  Apply appearance
+                </button>
+              </fieldset>
+              <Show when={snapshot()?.kind === "mermaid"}>
+                <fieldset disabled={!snapshot()?.commands.visualEditing}>
+                  <legend>Attributes & rules</legend>
+                  <label>
+                    Attribute name{" "}
+                    <input
+                      type="text"
+                      value={attributeName()}
+                      onInput={(event) =>
+                        setAttributeName(event.currentTarget.value)
+                      }
+                    />
+                  </label>
+                  <label>
+                    Attribute value{" "}
+                    <input
+                      type="text"
+                      value={attributeValue()}
+                      onInput={(event) =>
+                        setAttributeValue(event.currentTarget.value)
+                      }
+                    />
+                  </label>
+                  <button
+                    class="button button--secondary"
+                    type="button"
+                    onClick={() => {
+                      const id = snapshot()?.selectedElementId;
+                      if (id && attributeName())
+                        void editMermaid([
+                          {
+                            type: "set",
+                            path: [
+                              "elements",
+                              "nodes",
+                              id,
+                              "attributes",
+                              attributeName(),
+                            ],
+                            value: attributeValue() as MetadataValue,
+                          },
+                        ]);
+                    }}
+                  >
+                    Set attribute
+                  </button>
+                  <button
+                    class="button button--quiet-dark"
+                    type="button"
+                    onClick={() => {
+                      const name = attributeName();
+                      if (name)
+                        void editMermaid([
+                          {
+                            type: "set",
+                            path: ["rules"],
+                            value: [
+                              {
+                                match: {
+                                  attributes: {
+                                    [name]: { eq: attributeValue() },
+                                  },
+                                },
+                                style: {
+                                  fill: fill(),
+                                  outline: { color: stroke() },
+                                },
+                              },
+                            ],
+                          },
+                        ]);
+                    }}
+                  >
+                    Create matching rule
+                  </button>
+                </fieldset>
+                <fieldset disabled={!snapshot()?.commands.visualEditing}>
+                  <legend>Layout settings</legend>
+                  <label>
+                    Node spacing{" "}
+                    <input
+                      type="range"
+                      min="24"
+                      max="96"
+                      value="48"
+                      onChange={(event) =>
+                        void editMermaid([
+                          {
+                            type: "set",
+                            path: ["layout", "spacing", "node"],
+                            value: Number(event.currentTarget.value),
+                          },
+                        ])
+                      }
+                    />
+                  </label>
+                  <label>
+                    Layer spacing{" "}
+                    <input
+                      type="range"
+                      min="32"
+                      max="128"
+                      value="72"
+                      onChange={(event) =>
+                        void editMermaid([
+                          {
+                            type: "set",
+                            path: ["layout", "spacing", "layer"],
+                            value: Number(event.currentTarget.value),
+                          },
+                        ])
+                      }
+                    />
+                  </label>
+                  <button
+                    class="button button--secondary"
+                    type="button"
+                    onClick={() => void useAutomaticPosition()}
+                  >
+                    Use automatic position
+                  </button>
+                  <button
+                    class="button button--quiet-dark"
+                    type="button"
+                    onClick={() => void cleanUnused()}
+                  >
+                    Clean up unused settings
+                  </button>
+                </fieldset>
+              </Show>
+            </Show>
           </aside>
-        </Show>
-
-        <Show when={!ui.inspectorOpen}>
-          <button
-            class="inspector-restore"
-            type="button"
-            onClick={toggleInspector}
-          >
-            Show inspector
-          </button>
         </Show>
       </main>
     </div>
