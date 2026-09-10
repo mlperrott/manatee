@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = "http://127.0.0.1:4173/";
+const externalBaseURL = process.env.MANATEE_BASE_URL;
+const baseURL = externalBaseURL ?? "http://127.0.0.1:4173/";
 
 export default defineConfig({
   testDir: "./tests/browser",
@@ -12,12 +13,16 @@ export default defineConfig({
     baseURL,
     trace: "on-first-retry",
   },
-  webServer: {
-    command: "npm run dev",
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  ...(externalBaseURL
+    ? {}
+    : {
+        webServer: {
+          command: "npm run dev",
+          url: baseURL,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+      }),
   projects: [
     {
       name: "chromium",

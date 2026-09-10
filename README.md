@@ -1,6 +1,8 @@
 # Manatee
 
-Manatee is a browser-based presentation editor for portable Mermaid and BPMN diagrams. The first release is under active development; the current application is the production Solid 2 shell and module foundation.
+Manatee is a browser-based presentation editor for portable Mermaid and BPMN diagrams. Use the public Studio at [mlperrott.github.io/manatee](https://mlperrott.github.io/manatee/); editing and autosave stay in the browser and require no account.
+
+Supported syntax, portability rules, browser targets, and release evidence are documented in [the release guide](docs/release.md).
 
 ## Development
 
@@ -34,7 +36,7 @@ middleware.
 
 ## Structure
 
-- `src/core` — framework-neutral document contracts and, later, the document engine.
+- `src/core` — framework-neutral document engine and source-preserving metadata codecs.
 - `src/adapters` — Mermaid and BPMN document adapter boundaries.
 - `src/workers` — layout worker contracts and implementations.
 - `src/persistence` — browser document storage.
