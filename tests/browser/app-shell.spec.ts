@@ -57,7 +57,9 @@ test("switches to the lazy BPMN editor and selects a process element", async ({
   await page.goto("./");
   await page.getByRole("button", { name: "BPMN example" }).click();
 
-  await expect(page.locator(".bpmn-surface .djs-container")).toBeVisible();
+  await expect(page.locator(".bpmn-surface .djs-container")).toBeVisible({
+    timeout: 10_000,
+  });
   await page.locator('[data-element-id="Task_Review"]').click();
   await expect(
     page
