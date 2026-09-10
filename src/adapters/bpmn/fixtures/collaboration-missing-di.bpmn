@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_Collaboration" targetNamespace="https://example.com/manatee">
+  <bpmn:collaboration id="Collaboration_1">
+    <bpmn:participant id="Participant_Seller" name="Seller" processRef="Process_Seller" />
+    <bpmn:participant id="Participant_Buyer" name="Buyer" processRef="Process_Buyer" />
+    <bpmn:messageFlow id="MessageFlow_1" name="Order" sourceRef="Task_Send" targetRef="Task_Receive" />
+  </bpmn:collaboration>
+  <bpmn:process id="Process_Seller" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_Seller">
+      <bpmn:lane id="Lane_Sales" name="Sales">
+        <bpmn:flowNodeRef>Start_Seller</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Send</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Seller</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_Seller" />
+    <bpmn:sendTask id="Task_Send" name="Send order" />
+    <bpmn:endEvent id="End_Seller" />
+    <bpmn:sequenceFlow id="Flow_S1" sourceRef="Start_Seller" targetRef="Task_Send" />
+    <bpmn:sequenceFlow id="Flow_S2" sourceRef="Task_Send" targetRef="End_Seller" />
+  </bpmn:process>
+  <bpmn:process id="Process_Buyer" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_Buyer">
+      <bpmn:lane id="Lane_Purchasing" name="Purchasing">
+        <bpmn:flowNodeRef>Start_Buyer</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Receive</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Buyer</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_Buyer" />
+    <bpmn:receiveTask id="Task_Receive" name="Receive order" />
+    <bpmn:endEvent id="End_Buyer" />
+    <bpmn:sequenceFlow id="Flow_B1" sourceRef="Start_Buyer" targetRef="Task_Receive" />
+    <bpmn:sequenceFlow id="Flow_B2" sourceRef="Task_Receive" targetRef="End_Buyer" />
+  </bpmn:process>
+</bpmn:definitions>

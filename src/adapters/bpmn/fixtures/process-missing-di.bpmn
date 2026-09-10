@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- semantic comment must survive visual edits -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:manatee="https://mlperrott.github.io/manatee/bpmn" xmlns:vendor="https://example.com/vendor" id="Definitions_Process" targetNamespace="https://example.com/manatee">
+  <bpmn:category id="Category_1">
+    <bpmn:categoryValue id="CategoryValue_1" value="Review" />
+  </bpmn:category>
+  <bpmn:process id="Process_1" isExecutable="false">
+    <bpmn:extensionElements>
+      <vendor:setting key="preserve">untouched</vendor:setting>
+    </bpmn:extensionElements>
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_Operations" name="Operations">
+        <bpmn:childLaneSet id="LaneSet_Nested">
+          <bpmn:lane id="Lane_Review" name="Review">
+            <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
+            <bpmn:flowNodeRef>Task_Review</bpmn:flowNodeRef>
+            <bpmn:flowNodeRef>Gateway_1</bpmn:flowNodeRef>
+            <bpmn:flowNodeRef>SubProcess_1</bpmn:flowNodeRef>
+            <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
+          </bpmn:lane>
+        </bpmn:childLaneSet>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_1" name="Request received">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="Task_Review" name="Review request" implementation="##unspecified">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+      <bpmn:categoryValueRef>CategoryValue_1</bpmn:categoryValueRef>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_1" name="Approved?">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:subProcess id="SubProcess_1" name="Fulfil">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+      <bpmn:startEvent id="SubStart_1">
+        <bpmn:outgoing>SubFlow_1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="Task_Service" name="Perform work" implementation="service">
+        <bpmn:incoming>SubFlow_1</bpmn:incoming>
+        <bpmn:outgoing>SubFlow_2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="SubEnd_1">
+        <bpmn:incoming>SubFlow_2</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="SubFlow_1" sourceRef="SubStart_1" targetRef="Task_Service" />
+      <bpmn:sequenceFlow id="SubFlow_2" sourceRef="Task_Service" targetRef="SubEnd_1" />
+    </bpmn:subProcess>
+    <bpmn:endEvent id="End_1" name="Complete">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_1" targetRef="Task_Review" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Review" targetRef="Gateway_1" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Gateway_1" targetRef="SubProcess_1" />
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="SubProcess_1" targetRef="End_1" />
+    <bpmn:dataObject id="Data_1" name="Request" />
+    <bpmn:dataObjectReference id="DataRef_1" name="Request data" dataObjectRef="Data_1" />
+    <bpmn:textAnnotation id="Annotation_1">
+      <bpmn:text>Manager review</bpmn:text>
+    </bpmn:textAnnotation>
+    <bpmn:association id="Association_1" sourceRef="Task_Review" targetRef="Annotation_1" />
+    <bpmn:group id="Group_1" categoryValueRef="CategoryValue_1" />
+  </bpmn:process>
+</bpmn:definitions>
