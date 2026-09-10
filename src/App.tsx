@@ -31,6 +31,16 @@ import {
   patchManateeMetadata,
 } from "./core/metadata/manateeMetadata";
 import type { MetadataEdit, MetadataValue } from "./core/metadata/types";
+import {
+  copyPngOrDownload,
+  downloadBlob,
+  portableFilename,
+  rasterizeSvg,
+} from "./export/DiagramExporter";
+import {
+  IndexedDbDocumentRepository,
+  type SavedDocument,
+} from "./persistence/DocumentRepository";
 import "./app.css";
 
 const BpmnSurface = lazy(async () => {
@@ -78,11 +88,23 @@ export default function App() {
   const [stroke, setStroke] = createSignal("#2d817c");
   const [attributeName, setAttributeName] = createSignal("owner");
   const [attributeValue, setAttributeValue] = createSignal("operations");
+  const [filename, setFilename] = createSignal("request-flow.mmd");
+  const [recovery, setRecovery] = createSignal<SavedDocument>();
+  const [pngScale, setPngScale] = createSignal(2);
+  const [pngBackground, setPngBackground] = createSignal<
+    "#ffffff" | "transparent"
+  >("#ffffff");
+  const [exportMessage, setExportMessage] = createSignal("");
   const layout = new MermaidLayout();
+  const repository = new IndexedDbDocumentRepository();
   let adapter: ActiveAdapter = new MermaidDocumentAdapter();
   let bpmnCanvas: BpmnCanvas | undefined;
   let stage: HTMLElement | undefined;
   let sourceTimer: ReturnType<typeof setTimeout> | undefined;
+  let fileInput: HTMLInputElement | undefined;
+  let fileHandle: FileSystemFileHandle | undefined;
+  let lastValidSource = mermaidExample;
+  let persistenceReady = false;
   let revision = 0;
   let ignoreBpmnGeometry = true;
 
@@ -113,6 +135,7 @@ export default function App() {
     const currentRevision = ++revision;
     setSnapshot(next);
     setSource(next.source);
+    if (next.valid) lastValidSource = next.source;
     if (next.kind === "mermaid" && next.semanticModel) {
       const mermaid = next as MermaidDocumentSnapshot;
       const nextScene = await layout.layout({
@@ -135,6 +158,17 @@ export default function App() {
     setUi((draft) => {
       draft.status = { kind: "ready" };
     });
+    if (persistenceReady) {
+      void repository
+        .save({
+          filename: filename(),
+          kind: next.kind,
+          source: next.source,
+          lastValidSource,
+          savedAt: Date.now(),
+        })
+        .catch(fail);
+    }
   };
 
   const execute = async (command: Parameters<ActiveAdapter["execute"]>[0]) => {
@@ -151,6 +185,8 @@ export default function App() {
     adapter = new MermaidDocumentAdapter();
     bpmnCanvas = undefined;
     setZoom(1);
+    setFilename("request-flow.mmd");
+    fileHandle = undefined;
     setUi((draft) => {
       draft.status = { kind: "loading", message: "Opening Mermaid example…" };
     });
@@ -162,6 +198,8 @@ export default function App() {
     setScene(undefined);
     bpmnCanvas = undefined;
     setZoom(1);
+    setFilename("review-process.bpmn");
+    fileHandle = undefined;
     setUi((draft) => {
       draft.status = { kind: "loading", message: "Opening BPMN example…" };
     });
@@ -177,6 +215,199 @@ export default function App() {
     } catch (error) {
       fail(error);
     }
+  };
+
+  const openPortableDocument = async (
+    documentSource: string,
+    documentFilename: string,
+    kind: "mermaid" | "bpmn",
+    recoverySource?: string,
+  ) => {
+    if ("dispose" in adapter) adapter.dispose();
+    bpmnCanvas = undefined;
+    setScene(undefined);
+    setFilename(documentFilename);
+    setZoom(1);
+    setUi((draft) => {
+      draft.status = {
+        kind: "loading",
+        message: `Opening ${documentFilename}…`,
+      };
+    });
+    try {
+      if (kind === "mermaid") {
+        const mermaid = new MermaidDocumentAdapter();
+        adapter = mermaid;
+        const opened = await mermaid.open(recoverySource ?? documentSource, {
+          kind,
+          filename: documentFilename,
+        });
+        await present(
+          recoverySource && recoverySource !== documentSource
+            ? await mermaid.replaceSource(documentSource)
+            : opened,
+        );
+      } else {
+        const { BpmnDocumentAdapter } =
+          await import("./adapters/bpmn/BpmnDocumentAdapter");
+        const bpmn = new BpmnDocumentAdapter();
+        adapter = bpmn;
+        await bpmn.open(recoverySource ?? documentSource, {
+          kind,
+          filename: documentFilename,
+        });
+        const opened =
+          recoverySource && recoverySource !== documentSource
+            ? await bpmn.replaceSource(documentSource)
+            : await bpmn.recoverMissingDi();
+        await present(opened);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const openFile = async (file: File) => {
+    const documentSource = await file.text();
+    const kind =
+      file.name.toLowerCase().endsWith(".bpmn") ||
+      /<(?:\w+:)?definitions\b/u.test(documentSource)
+        ? "bpmn"
+        : "mermaid";
+    await openPortableDocument(documentSource, file.name, kind);
+  };
+
+  const chooseFile = async () => {
+    const picker = (
+      window as typeof window & {
+        showOpenFilePicker?: (
+          options: unknown,
+        ) => Promise<FileSystemFileHandle[]>;
+      }
+    ).showOpenFilePicker;
+    if (!picker) {
+      fileInput?.click();
+      return;
+    }
+    try {
+      const [handle] = await picker({
+        multiple: false,
+        types: [
+          {
+            description: "Mermaid or BPMN diagram",
+            accept: {
+              "text/plain": [".mmd", ".mermaid"],
+              "application/xml": [".bpmn"],
+            },
+          },
+        ],
+      });
+      if (!handle) return;
+      fileHandle = handle;
+      await openFile(await handle.getFile());
+      fileHandle = handle;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      fail(error);
+    }
+  };
+
+  const savePortableDocument = async () => {
+    const current = snapshot();
+    if (!current) return;
+    try {
+      if (fileHandle?.createWritable) {
+        const writable = await fileHandle.createWritable();
+        await writable.write(current.source);
+        await writable.close();
+        setExportMessage("Document saved to its original file.");
+      } else {
+        const type =
+          current.kind === "bpmn"
+            ? "application/xml;charset=utf-8"
+            : "text/plain;charset=utf-8";
+        downloadBlob(new Blob([current.source], { type }), filename());
+        setExportMessage("Portable document downloaded.");
+      }
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const activeSvg = async () => {
+    const current = snapshot();
+    if (!current?.commands.imageExport || current.previewOutdated) {
+      throw new Error("Fix source errors before exporting this diagram.");
+    }
+    if (current.kind === "bpmn") {
+      if (!bpmnCanvas) throw new Error("The BPMN canvas is still loading.");
+      return await bpmnCanvas.exportSvg();
+    }
+    return svg();
+  };
+
+  const exportSvg = async () => {
+    try {
+      downloadBlob(
+        new Blob([await activeSvg()], { type: "image/svg+xml;charset=utf-8" }),
+        portableFilename(filename(), "svg"),
+      );
+      setExportMessage("SVG downloaded.");
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const makePng = async () =>
+    await rasterizeSvg(await activeSvg(), {
+      scale: pngScale(),
+      background: pngBackground(),
+    });
+
+  const exportPng = async () => {
+    try {
+      downloadBlob(await makePng(), portableFilename(filename(), "png"));
+      setExportMessage("PNG downloaded.");
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const copyPng = async () => {
+    try {
+      const result = await copyPngOrDownload(
+        await makePng(),
+        portableFilename(filename(), "png"),
+      );
+      setExportMessage(
+        result === "copied"
+          ? "PNG copied to the clipboard."
+          : "Clipboard unavailable; PNG downloaded instead.",
+      );
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const recoverAutosave = async () => {
+    const saved = recovery();
+    if (!saved) return;
+    persistenceReady = true;
+    setRecovery(undefined);
+    lastValidSource = saved.lastValidSource ?? saved.source;
+    await openPortableDocument(
+      saved.source,
+      saved.filename,
+      saved.kind,
+      saved.lastValidSource,
+    );
+  };
+
+  const discardAutosave = async () => {
+    await repository.clear();
+    setRecovery(undefined);
+    persistenceReady = true;
+    await openMermaid();
   };
 
   const replaceSource = (value: string) => {
@@ -363,7 +594,22 @@ export default function App() {
   };
 
   onSettled(() => {
-    void openMermaid();
+    void repository
+      .load()
+      .then(async (saved) => {
+        if (saved) {
+          setRecovery(saved);
+          await openMermaid();
+        } else {
+          persistenceReady = true;
+          await openMermaid();
+        }
+      })
+      .catch((error) => {
+        persistenceReady = true;
+        fail(error);
+        void openMermaid();
+      });
     if (!stage) return;
     const measure = () =>
       setUi((draft) => {
@@ -405,14 +651,36 @@ export default function App() {
             }}
             aria-hidden="true"
           />
-          {snapshot()?.kind === "bpmn"
-            ? "Review process.bpmn"
-            : "Request flow.mmd"}
+          {filename()}
           <Show when={snapshot()?.dirty}>
             <span class="dirty-badge">Edited</span>
           </Show>
         </div>
         <nav class="topbar__actions" aria-label="Document actions">
+          <input
+            class="file-input"
+            type="file"
+            accept=".mmd,.mermaid,.bpmn,.xml,text/plain,application/xml"
+            aria-label="Choose diagram file"
+            ref={(element) => {
+              fileInput = element;
+            }}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              if (file) {
+                fileHandle = undefined;
+                void openFile(file);
+              }
+              event.currentTarget.value = "";
+            }}
+          />
+          <button
+            class="button button--quiet"
+            type="button"
+            onClick={() => void chooseFile()}
+          >
+            Open
+          </button>
           <button
             class="button button--quiet"
             type="button"
@@ -430,11 +698,66 @@ export default function App() {
           <button
             class="button button--quiet"
             type="button"
-            disabled
-            title="Export arrives with file workflows"
+            onClick={() => void savePortableDocument()}
           >
-            Export
+            Save
           </button>
+          <details class="export-menu">
+            <summary class="button button--quiet">Export</summary>
+            <div class="export-menu__panel">
+              <strong>Slide-ready export</strong>
+              <label>
+                PNG scale
+                <select
+                  aria-label="PNG scale"
+                  value={pngScale()}
+                  onChange={(event) =>
+                    setPngScale(Number(event.currentTarget.value))
+                  }
+                >
+                  <option value="2">2×</option>
+                  <option value="3">3×</option>
+                  <option value="4">4×</option>
+                </select>
+              </label>
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={pngBackground() === "transparent"}
+                  onChange={(event) =>
+                    setPngBackground(
+                      event.currentTarget.checked ? "transparent" : "#ffffff",
+                    )
+                  }
+                />
+                Transparent background
+              </label>
+              <button
+                type="button"
+                onClick={() => void exportSvg()}
+                disabled={!snapshot()?.commands.imageExport}
+              >
+                Download SVG
+              </button>
+              <button
+                type="button"
+                onClick={() => void exportPng()}
+                disabled={!snapshot()?.commands.imageExport}
+              >
+                Download PNG
+              </button>
+              <button
+                type="button"
+                onClick={() => void copyPng()}
+                disabled={!snapshot()?.commands.imageExport}
+              >
+                Copy PNG
+              </button>
+              <Show when={exportMessage()}>
+                <span role="status">{exportMessage()}</span>
+              </Show>
+            </div>
+          </details>
           <button
             class="button button--primary"
             type="button"
@@ -451,6 +774,22 @@ export default function App() {
         </nav>
       </header>
       <StatusNotice status={ui.status} />
+      <Show when={recovery()}>
+        {(readSaved) => (
+          <section class="recovery-banner" aria-label="Autosave recovery">
+            <span>
+              <strong>Recover autosaved work?</strong>
+              {readSaved().filename} was edited in this browser.
+            </span>
+            <button type="button" onClick={() => void recoverAutosave()}>
+              Recover
+            </button>
+            <button type="button" onClick={() => void discardAutosave()}>
+              Discard
+            </button>
+          </section>
+        )}
+      </Show>
       <main
         id="workspace"
         class={{ workspace: true, "workspace--source-open": ui.sourceOpen }}

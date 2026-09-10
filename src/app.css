@@ -161,6 +161,117 @@ a:focus-visible {
   gap: 8px;
 }
 
+.file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.export-menu {
+  position: relative;
+}
+
+.export-menu summary {
+  display: grid;
+  place-items: center;
+  list-style: none;
+}
+
+.export-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.export-menu__panel {
+  position: absolute;
+  z-index: 30;
+  top: 44px;
+  right: 0;
+  width: 228px;
+  display: grid;
+  gap: 10px;
+  padding: 15px;
+  color: var(--ink);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.export-menu__panel label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.export-menu__panel select,
+.export-menu__panel button {
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f6f8f8;
+  font: inherit;
+}
+
+.export-menu__panel button {
+  color: var(--brand-dark);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.export-menu__panel .checkbox-label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.export-menu__panel [role="status"] {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.recovery-banner {
+  position: fixed;
+  z-index: 25;
+  top: 80px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 420px;
+  padding: 12px 14px;
+  color: #173f3c;
+  background: #e3f3ef;
+  border: 1px solid #abd4ca;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+  font-size: 11px;
+}
+
+.recovery-banner span {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.recovery-banner button {
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--brand-dark);
+  background: white;
+  border: 1px solid #abd4ca;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+}
+
 .button,
 .icon-button,
 .segmented button,
