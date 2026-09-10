@@ -24,3 +24,5 @@ export {
   type MermaidView,
   type RelationshipIdentity,
 } from "./model";
+export * from "./layout";
+export * from "./render";

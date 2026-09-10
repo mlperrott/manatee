@@ -42,3 +42,66 @@ test("normalizes all supported Mermaid families in the browser", async ({
   ]);
   expect(runtimeErrors).toEqual([]);
 });
+
+test("lays out in a worker and renders the same SVG for preview and export", async ({
+  page,
+}) => {
+  const runtimeErrors: Error[] = [];
+  page.on("pageerror", (error) => runtimeErrors.push(error));
+  await page.goto("./");
+
+  const result = await page.evaluate(async () => {
+    const moduleUrl = "/src/adapters/mermaid/index.ts";
+    const api = (await import(moduleUrl)) as {
+      MermaidDocumentAdapter: new () => {
+        open(source: string): Promise<{
+          semanticModel?: unknown;
+          presentationModel?: { metadata?: Readonly<Record<string, unknown>> };
+        }>;
+      };
+      MermaidLayout: new () => {
+        layout(request: {
+          model: unknown;
+          metadata: Readonly<Record<string, unknown>> | undefined;
+        }): Promise<{
+          width: number;
+          nodes: readonly unknown[];
+          relationships: readonly unknown[];
+        }>;
+        dispose(): void;
+      };
+      renderMermaidPreviewSvg(scene: unknown): string;
+      renderMermaidExportSvg(scene: unknown): string;
+    };
+    const documentAdapter = new api.MermaidDocumentAdapter();
+    const snapshot = await documentAdapter.open(
+      "flowchart LR\nA[**Start**] --> B{Ready?}\nB --> C[(Store)]",
+    );
+    const layout = new api.MermaidLayout();
+    try {
+      const scene = await layout.layout({
+        model: snapshot.semanticModel,
+        metadata: snapshot.presentationModel?.metadata,
+      });
+      const preview = api.renderMermaidPreviewSvg(scene);
+      return {
+        width: scene.width,
+        nodeCount: scene.nodes.length,
+        relationshipCount: scene.relationships.length,
+        identical: preview === api.renderMermaidExportSvg(scene),
+        hasBold: preview.includes('font-weight="700"'),
+      };
+    } finally {
+      layout.dispose();
+    }
+  });
+
+  expect(result).toMatchObject({
+    nodeCount: 3,
+    relationshipCount: 2,
+    identical: true,
+    hasBold: true,
+  });
+  expect(result.width).toBeGreaterThan(0);
+  expect(runtimeErrors).toEqual([]);
+});
