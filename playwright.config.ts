@@ -26,15 +26,28 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: /mobile\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "firefox",
+      testIgnore: /mobile\.spec\.ts/,
       use: { ...devices["Desktop Firefox"] },
     },
     {
       name: "webkit",
+      testIgnore: /mobile\.spec\.ts/,
       use: { ...devices["Desktop Safari"] },
+    },
+    {
+      name: "iphone",
+      testMatch: /mobile\.spec\.ts/,
+      use: { ...devices["iPhone 13"] },
+    },
+    {
+      name: "mobile-chromium",
+      testMatch: /mobile\.spec\.ts/,
+      use: { ...devices["iPhone 13"], defaultBrowserType: "chromium" },
     },
   ],
 });

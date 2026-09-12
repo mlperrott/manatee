@@ -91,10 +91,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Install deployed smoke browsers
+        run: pnpm exec playwright install --with-deps chromium webkit
 
       - name: Smoke test deployed site
-        run: pnpm exec playwright test tests/browser/deployed.spec.ts --project=chromium
+        run: pnpm exec playwright test tests/browser/deployed.spec.ts tests/browser/mobile.spec.ts --project=chromium --project=iphone
         env:
           MANATEE_BASE_URL: ${{ needs.deploy.outputs.page_url }}

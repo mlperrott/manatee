@@ -55,8 +55,17 @@ function selectedLabel(current: ActiveSnapshot | undefined): string {
 }
 
 export default function App() {
+  // Choose a readable example for portrait phones without rewriting imported
+  // documents or changing their semantic source on rotation.
+  const exampleSource =
+    typeof window !== "undefined" &&
+    Math.min(window.innerWidth, window.screen.width) <= 600
+      ? mermaidExample.replace("flowchart LR", "flowchart TD")
+      : mermaidExample;
   const [ui, setUi] = createStore(initialEditorUiState());
   const [zoom, setZoom] = createSignal(1);
+  const [fitView, setFitView] = createSignal(true);
+  const [mobileView, setMobileView] = createSignal("canvas");
   const [fill, setFill] = createSignal("#e0f0ec");
   const [stroke, setStroke] = createSignal("#2d817c");
   const [attributeName, setAttributeName] = createSignal("owner");
@@ -87,7 +96,7 @@ export default function App() {
     },
     store: repository,
     initialFilename: "request-flow.mmd",
-    initialSource: mermaidExample,
+    initialSource: exampleSource,
     present: async (next) => {
       if (
         next.kind === "bpmn" &&
@@ -146,17 +155,21 @@ export default function App() {
   const openMermaid = async () => {
     bpmnCanvas = undefined;
     setZoom(1);
+    setFitView(true);
+    setMobileView("canvas");
     fileHandle = undefined;
     await documentSession.open({
       kind: "mermaid",
       filename: "request-flow.mmd",
-      source: mermaidExample,
+      source: exampleSource,
     });
   };
 
   const openBpmn = async () => {
     bpmnCanvas = undefined;
     setZoom(1);
+    setFitView(true);
+    setMobileView("canvas");
     fileHandle = undefined;
     await documentSession.open(
       {
@@ -174,6 +187,8 @@ export default function App() {
   const openFile = async (file: File) => {
     bpmnCanvas = undefined;
     setZoom(1);
+    setFitView(true);
+    setMobileView("canvas");
     await documentSession.open(
       file.text().then((documentSource) => ({
         kind:
@@ -228,7 +243,7 @@ export default function App() {
     try {
       if (fileHandle?.createWritable) {
         const writable = await fileHandle.createWritable();
-        await writable.write(current.source);
+        await writable.write(source());
         await writable.close();
         setExportMessage("Document saved to its original file.");
       } else {
@@ -236,7 +251,7 @@ export default function App() {
           current.kind === "bpmn"
             ? "application/xml;charset=utf-8"
             : "text/plain;charset=utf-8";
-        downloadBlob(new Blob([current.source], { type }), filename());
+        downloadBlob(new Blob([source()], { type }), filename());
         setExportMessage("Portable document downloaded.");
       }
     } catch (error) {
@@ -244,9 +259,15 @@ export default function App() {
     }
   };
 
+  const imageExportReady = createMemo(() =>
+    Boolean(
+      snapshot()?.commands.imageExport && source() === snapshot()?.source,
+    ),
+  );
+
   const activeSvg = async () => {
     const current = snapshot();
-    if (!current?.commands.imageExport || current.previewOutdated) {
+    if (!imageExportReady() || !current || current.previewOutdated) {
       throw new Error("Fix source errors before exporting this diagram.");
     }
     if (current.kind === "bpmn") {
@@ -314,7 +335,7 @@ export default function App() {
     void documentSession.initialize({
       kind: "mermaid",
       filename: "request-flow.mmd",
-      source: mermaidExample,
+      source: exampleSource,
     });
     if (!stage) return;
     const measure = () =>
@@ -326,7 +347,36 @@ export default function App() {
     const observer = new ResizeObserver(measure);
     observer.observe(stage);
     measure();
+    const dismissMenus = (event: Event) => {
+      const target = event.target;
+      const escape = event instanceof KeyboardEvent && event.key === "Escape";
+      if (event instanceof KeyboardEvent && !escape) return;
+      for (const menu of document.querySelectorAll<HTMLDetailsElement>(
+        ".export-menu[open]",
+      )) {
+        if (escape || (target instanceof Node && !menu.contains(target))) {
+          menu.open = false;
+          if (escape) menu.querySelector("summary")?.focus();
+        }
+      }
+    };
+    const viewport = window.visualViewport;
+    const resizeViewport = () => {
+      if (viewport?.scale === 1)
+        document.documentElement.style.setProperty(
+          "--app-height",
+          `${viewport.height}px`,
+        );
+    };
+    resizeViewport();
+    viewport?.addEventListener("resize", resizeViewport);
+    document.addEventListener("pointerdown", dismissMenus);
+    document.addEventListener("keydown", dismissMenus);
     return () => {
+      viewport?.removeEventListener("resize", resizeViewport);
+      document.documentElement.style.removeProperty("--app-height");
+      document.removeEventListener("pointerdown", dismissMenus);
+      document.removeEventListener("keydown", dismissMenus);
       observer.disconnect();
       unsubscribeDocument();
       documentSession.dispose();
@@ -356,7 +406,9 @@ export default function App() {
             }}
             aria-hidden="true"
           />
-          {filename()}
+          <span class="document-title__filename" title={filename()}>
+            {filename()}
+          </span>
           <Show when={snapshot()?.dirty}>
             <span class="dirty-badge">Edited</span>
           </Show>
@@ -367,6 +419,7 @@ export default function App() {
             type="file"
             accept=".mmd,.mermaid,.bpmn,.xml,text/plain,application/xml"
             aria-label="Choose diagram file"
+            tabindex={-1}
             ref={(element) => {
               fileInput = element;
             }}
@@ -387,14 +440,14 @@ export default function App() {
             Open
           </button>
           <button
-            class="button button--quiet"
+            class="button button--quiet desktop-only"
             type="button"
             onClick={() => void openMermaid()}
           >
             Mermaid example
           </button>
           <button
-            class="button button--quiet"
+            class="button button--quiet desktop-only"
             type="button"
             onClick={() => void openBpmn()}
           >
@@ -440,31 +493,44 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => void exportSvg()}
-                disabled={!snapshot()?.commands.imageExport}
+                disabled={!imageExportReady()}
               >
                 Download SVG
               </button>
               <button
                 type="button"
                 onClick={() => void exportPng()}
-                disabled={!snapshot()?.commands.imageExport}
+                disabled={!imageExportReady()}
               >
                 Download PNG
               </button>
               <button
                 type="button"
                 onClick={() => void copyPng()}
-                disabled={!snapshot()?.commands.imageExport}
+                disabled={!imageExportReady()}
               >
                 Copy PNG
               </button>
-              <Show when={exportMessage()}>
-                <span role="status">{exportMessage()}</span>
-              </Show>
+            </div>
+          </details>
+          <details class="export-menu mobile-only examples-menu">
+            <summary class="button button--quiet">Examples</summary>
+            <div
+              class="export-menu__panel"
+              onClick={(event) => {
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+            >
+              <button type="button" onClick={() => void openMermaid()}>
+                Mermaid example
+              </button>
+              <button type="button" onClick={() => void openBpmn()}>
+                BPMN example
+              </button>
             </div>
           </details>
           <button
-            class="button button--primary"
+            class="button button--primary desktop-only"
             type="button"
             aria-expanded={ui.sourceOpen ? "true" : "false"}
             aria-controls="source-panel"
@@ -478,6 +544,18 @@ export default function App() {
           </button>
         </nav>
       </header>
+      <Show when={exportMessage()}>
+        <div class="action-feedback">
+          <span role="status">{exportMessage()}</span>
+          <button
+            type="button"
+            aria-label="Dismiss notification"
+            onClick={() => setExportMessage("")}
+          >
+            ×
+          </button>
+        </div>
+      </Show>
       <StatusNotice status={documentState().status} />
       <Show when={recovery()}>
         {(readSaved) => (
@@ -503,10 +581,23 @@ export default function App() {
       </Show>
       <main
         id="workspace"
-        class={{ workspace: true, "workspace--source-open": ui.sourceOpen }}
+        tabindex={-1}
+        data-mobile-view={mobileView()}
+        class={{
+          workspace: true,
+          "workspace--source-open": ui.sourceOpen,
+          "workspace--inspector-closed": !ui.inspectorOpen,
+        }}
       >
-        <Show when={ui.sourceOpen}>
-          <aside class="source-panel" id="source-panel" aria-label="Source">
+        <Show when={ui.sourceOpen || mobileView() === "source"}>
+          <aside
+            class={{
+              "source-panel": true,
+              "mobile-panel-only": !ui.sourceOpen,
+            }}
+            id="source-panel"
+            aria-label="Source"
+          >
             <div class="panel-heading">
               <span>
                 <span class="eyebrow">Source</span>
@@ -516,8 +607,11 @@ export default function App() {
             </div>
             <textarea
               aria-label="Diagram source"
+              disabled={!snapshot()}
               value={source()}
               spellcheck={false}
+              autocapitalize="off"
+              autocorrect="off"
               onInput={(event) =>
                 documentSession.editSource(event.currentTarget.value)
               }
@@ -528,7 +622,11 @@ export default function App() {
               data-valid={snapshot()?.valid ? "true" : "false"}
             >
               <strong>
-                {snapshot()?.valid ? "Preview current" : "Source has errors"}
+                {!snapshot()
+                  ? "Opening diagram…"
+                  : snapshot()?.valid
+                    ? "Preview current"
+                    : "Source has errors"}
               </strong>
               <span>
                 {snapshot()?.valid
@@ -601,7 +699,8 @@ export default function App() {
                 type="button"
                 aria-label="Zoom out"
                 onClick={() => {
-                  const next = Math.max(0.5, zoom() - 0.1);
+                  const next = Math.max(0.1, zoom() - 0.1);
+                  setFitView(false);
                   setZoom(next);
                   bpmnCanvas?.setZoom(next);
                 }}
@@ -614,11 +713,22 @@ export default function App() {
                 aria-label="Zoom in"
                 onClick={() => {
                   const next = Math.min(2, zoom() + 0.1);
+                  setFitView(false);
                   setZoom(next);
                   bpmnCanvas?.setZoom(next);
                 }}
               >
                 +
+              </button>
+              <button
+                type="button"
+                aria-label="Fit diagram to screen"
+                onClick={() => {
+                  setFitView(true);
+                  if (bpmnCanvas) setZoom(bpmnCanvas.fitViewport());
+                }}
+              >
+                Fit
               </button>
             </div>
           </div>
@@ -649,6 +759,7 @@ export default function App() {
                     onCommand={(command) => execute(command)}
                     onReady={(canvas) => {
                       bpmnCanvas = canvas;
+                      setZoom(canvas.fitViewport());
                     }}
                     onError={fail}
                   />
@@ -657,7 +768,17 @@ export default function App() {
             >
               <MermaidSurface
                 svg={svg()}
+                width={
+                  (snapshot() as MermaidDocumentSnapshot | undefined)?.view
+                    ?.scene?.width ?? 1
+                }
+                height={
+                  (snapshot() as MermaidDocumentSnapshot | undefined)?.view
+                    ?.scene?.height ?? 1
+                }
                 zoom={zoom()}
+                fitView={fitView()}
+                onZoom={setZoom}
                 disabled={!snapshot()?.commands.visualEditing}
                 selectedElementId={snapshot()?.selectedElementId}
                 onSelect={(id) =>
@@ -679,7 +800,7 @@ export default function App() {
           </div>
         </section>
         <Show
-          when={ui.inspectorOpen}
+          when={ui.inspectorOpen || mobileView() === "inspector"}
           fallback={
             <button
               class="inspector-restore"
@@ -694,14 +815,18 @@ export default function App() {
             </button>
           }
         >
-          <aside class="inspector" aria-label="Inspector">
+          <aside
+            class={{ inspector: true, "mobile-panel-only": !ui.inspectorOpen }}
+            id="inspector-panel"
+            aria-label="Inspector"
+          >
             <div class="panel-heading">
               <span>
                 <span class="eyebrow">Inspector</span>
                 <strong>Presentation</strong>
               </span>
               <button
-                class="icon-button"
+                class="icon-button desktop-only"
                 type="button"
                 aria-label="Close inspector"
                 onClick={() =>
@@ -719,7 +844,10 @@ export default function App() {
                 <div class="inspector-empty">
                   <span class="inspector-empty__icon" aria-hidden="true" />
                   <strong>No selection</strong>
-                  <p>Select an element. Arrow keys move Mermaid elements.</p>
+                  <p>
+                    Select an element on the canvas to change its appearance.
+                  </p>
+                  <p class="desktop-only">Arrow keys move Mermaid elements.</p>
                 </div>
               }
             >
@@ -728,6 +856,37 @@ export default function App() {
                 <strong>{selectedLabel(snapshot())}</strong>
                 <code>{snapshot()?.selectedElementId}</code>
               </div>
+              <Show when={snapshot()?.kind === "mermaid"}>
+                <fieldset disabled={action("move").state !== "available"}>
+                  <legend>Move selection</legend>
+                  <div class="nudge-controls">
+                    {(
+                      [
+                        ["left", -10, 0],
+                        ["up", 0, -10],
+                        ["down", 0, 10],
+                        ["right", 10, 0],
+                      ] as const
+                    ).map(([direction, dx, dy]) => (
+                      <button
+                        type="button"
+                        aria-label={`Move selection ${direction}`}
+                        onClick={() => {
+                          const elementId = snapshot()?.selectedElementId;
+                          if (elementId)
+                            void execute({ type: "move", elementId, dx, dy });
+                        }}
+                      >
+                        {
+                          { left: "←", up: "↑", down: "↓", right: "→" }[
+                            direction
+                          ]
+                        }
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
+              </Show>
               <fieldset
                 disabled={action("set-appearance").state !== "available"}
                 title={actionTitle("set-appearance")}
@@ -903,6 +1062,27 @@ export default function App() {
           </aside>
         </Show>
       </main>
+      <nav
+        class="mobile-workspace-nav mobile-only"
+        aria-label="Workspace views"
+      >
+        {(["canvas", "source", "inspector"] as const).map((view) => (
+          <button
+            type="button"
+            aria-pressed={mobileView() === view ? "true" : "false"}
+            onClick={() => setMobileView(view)}
+          >
+            {view === "canvas"
+              ? "Canvas"
+              : view === "source"
+                ? "Source"
+                : "Inspector"}
+            <Show when={view === "inspector" && snapshot()?.selectedElementId}>
+              <span class="selection-indicator" aria-hidden="true" />
+            </Show>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

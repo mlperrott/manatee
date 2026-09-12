@@ -34,7 +34,7 @@ interface ElementRegistry {
 }
 
 interface CanvasService {
-  zoom(level: "fit-viewport" | number): void;
+  zoom(level: "fit-viewport" | number): number;
 }
 
 interface ModelingService {
@@ -148,6 +148,10 @@ export class BpmnCanvas implements Disposable {
 
   setZoom(level: number): void {
     this.#requireModeler().get("canvas").zoom(level);
+  }
+
+  fitViewport(): number {
+    return this.#requireModeler().get("canvas").zoom("fit-viewport");
   }
 
   async exportSvg(): Promise<string> {

@@ -217,3 +217,33 @@ test("exports scaled PNG and falls back to download when clipboard fails", async
     page.getByText("Clipboard unavailable; PNG downloaded instead."),
   ).toBeVisible();
 });
+
+test("reclaims the canvas when panels close and keeps menus keyboard accessible", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const canvas = page.getByRole("region", { name: "Diagram canvas" });
+  await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
+  const originalWidth = (await canvas.boundingBox())!.width;
+  await page.getByRole("button", { name: "Close inspector" }).click();
+  expect((await canvas.boundingBox())!.width).toBeGreaterThan(
+    originalWidth + 250,
+  );
+  await page.getByRole("button", { name: "Show source" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Diagram source" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Hide source" }).click();
+  await page.getByRole("button", { name: "Show inspector" }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Inspector" }),
+  ).toBeVisible();
+  await page.getByText("Export", { exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.locator(".export-menu:not(.examples-menu) summary"),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Download PNG" }),
+  ).not.toBeVisible();
+});
