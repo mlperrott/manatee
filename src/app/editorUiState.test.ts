@@ -8,7 +8,6 @@ describe("editor UI state", () => {
       sourceOpen: false,
       inspectorOpen: true,
       stageWidth: 0,
-      status: { kind: "ready" },
     });
   });
 

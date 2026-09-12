@@ -1,5 +1,6 @@
 import type { BpmnPresentationModel } from "./model";
 import { manateeModdleDescriptor } from "./manateeDescriptor";
+import type { DocumentCommand } from "../../core/document/DocumentEngine";
 
 export interface BpmnGeometryChange {
   readonly elementId: string;
@@ -14,7 +15,7 @@ export interface BpmnGeometryChange {
 
 export interface BpmnCanvasOptions {
   readonly presentation?: BpmnPresentationModel;
-  readonly onGeometryChange?: (changes: readonly BpmnGeometryChange[]) => void;
+  readonly onCommand?: (command: DocumentCommand) => void | Promise<void>;
   readonly onSelectionChange?: (elementId: string | undefined) => void;
 }
 
@@ -85,6 +86,10 @@ export class BpmnCanvas implements Disposable {
   #modeler: BpmnModeler | undefined;
   #source = "";
   #options: BpmnCanvasOptions = {};
+  #presentation: BpmnPresentationModel | undefined;
+  #selectedElementId: string | undefined;
+  #importing = false;
+  #commandPending = false;
 
   async mount(
     container: HTMLElement,
@@ -108,7 +113,8 @@ export class BpmnCanvas implements Disposable {
       const selection = (
         event as { readonly newSelection?: readonly RegistryElement[] }
       ).newSelection;
-      this.#options.onSelectionChange?.(selection?.[0]?.id);
+      this.#selectedElementId = selection?.[0]?.id;
+      this.#options.onSelectionChange?.(this.#selectedElementId);
     });
     await this.importSource(source, options.presentation);
   }
@@ -118,10 +124,17 @@ export class BpmnCanvas implements Disposable {
     presentation = this.#options.presentation,
   ): Promise<void> {
     const modeler = this.#requireModeler();
-    await modeler.importXML(source);
-    this.#source = source;
-    this.#applyStyles(presentation);
-    modeler.get("canvas").zoom("fit-viewport");
+    this.#importing = true;
+    try {
+      await modeler.importXML(source);
+      this.#source = source;
+      this.#presentation = presentation;
+      this.#applyStyles(presentation);
+      modeler.get("canvas").zoom("fit-viewport");
+    } finally {
+      this.#commandPending = false;
+      this.#importing = false;
+    }
   }
 
   source(): string {
@@ -151,6 +164,9 @@ export class BpmnCanvas implements Disposable {
     this.#modeler?.destroy();
     this.#modeler = undefined;
     this.#source = "";
+    this.#presentation = undefined;
+    this.#selectedElementId = undefined;
+    this.#commandPending = false;
   }
 
   #applyStyles(presentation: BpmnPresentationModel | undefined): void {
@@ -168,23 +184,68 @@ export class BpmnCanvas implements Disposable {
   }
 
   #emitGeometry(): void {
-    const callback = this.#options.onGeometryChange;
-    if (!callback || !this.#modeler) return;
-    callback(
-      this.#modeler
-        .get("elementRegistry")
-        .getAll()
-        .flatMap((element) => {
-          const change = geometry(element);
-          return change ? [change] : [];
-        }),
-    );
+    const callback = this.#options.onCommand;
+    const id = this.#selectedElementId;
+    if (
+      !callback ||
+      !id ||
+      !this.#modeler ||
+      this.#importing ||
+      this.#commandPending
+    ) {
+      return;
+    }
+    const element = this.#modeler.get("elementRegistry").get(id);
+    if (!element) return;
+    const current = geometry(element);
+    const beforeShape = this.#presentation?.shapes[id]?.bounds;
+    const beforeEdge = this.#presentation?.edges[id]?.waypoints;
+    let command: DocumentCommand | undefined;
+    if (current?.bounds && beforeShape) {
+      command =
+        current.bounds.width !== beforeShape.width ||
+        current.bounds.height !== beforeShape.height
+          ? { type: "resize", elementId: id, bounds: current.bounds }
+          : current.bounds.x !== beforeShape.x ||
+              current.bounds.y !== beforeShape.y
+            ? {
+                type: "move",
+                elementId: id,
+                dx: current.bounds.x - beforeShape.x,
+                dy: current.bounds.y - beforeShape.y,
+              }
+            : undefined;
+    } else if (
+      current?.waypoints &&
+      beforeEdge &&
+      !samePoints(current.waypoints, beforeEdge)
+    ) {
+      command = { type: "route", elementId: id, waypoints: current.waypoints };
+    }
+    if (!command) return;
+    this.#commandPending = true;
+    void Promise.resolve(callback(command)).finally(() => {
+      this.#commandPending = false;
+    });
   }
 
   #requireModeler(): BpmnModeler {
     if (!this.#modeler) throw new Error("Mount the BPMN canvas first.");
     return this.#modeler;
   }
+}
+
+function samePoints(
+  left: readonly { readonly x: number; readonly y: number }[],
+  right: readonly { readonly x: number; readonly y: number }[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (point, index) =>
+        point.x === right[index]?.x && point.y === right[index]?.y,
+    )
+  );
 }
 
 export { withExportAttribution as addBpmnExportAttribution };

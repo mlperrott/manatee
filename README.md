@@ -6,12 +6,12 @@ Supported syntax, portability rules, browser targets, and release evidence are d
 
 ## Development
 
-Requires Node.js 24 LTS or Node.js 26 and newer. Node.js 25 is outside
-Vitest's declared support range.
+Requires Node.js 24 LTS or Node.js 26 and newer, plus pnpm 11.19.0. Node.js 25
+is outside Vitest's declared support range.
 
 ```sh
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 The local development application is served at `http://127.0.0.1:4173/`.
@@ -19,14 +19,14 @@ The local development application is served at `http://127.0.0.1:4173/`.
 Run the complete source and production-build verification with:
 
 ```sh
-npm run verify
+pnpm verify
 ```
 
 Install Chromium once and run the browser smoke test with:
 
 ```sh
-npx playwright install chromium
-npm run test:browser
+pnpm exec playwright install chromium
+pnpm test:browser
 ```
 
 The production build uses Solid's client start mode and is emitted to

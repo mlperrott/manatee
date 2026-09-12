@@ -1,11 +1,11 @@
 import type { DocumentAdapter } from "../DocumentAdapter";
+import { TransactionalDocumentEngine } from "../../core/document/TransactionalDocumentEngine";
+import type { DocumentParser } from "../../core/document/TransactionalDocumentEngine";
 import {
-  TransactionalDocumentEngine,
-  type DocumentParser,
-} from "../../core/document/TransactionalDocumentEngine";
-import type {
-  CommandResult,
-  DocumentCommand,
+  CommandUnavailableError,
+  type PresentationCommand,
+  type CommandResult,
+  type DocumentCommand,
 } from "../../core/document/DocumentEngine";
 import type {
   DocumentDiagnostic,
@@ -19,7 +19,6 @@ import {
   patchBpmnEdgeWaypoints,
   patchBpmnShapeBounds,
   readBpmnSource,
-  type BpmnBounds,
 } from "../../core/bpmn/bpmnSource";
 import {
   xmlAttribute,
@@ -42,6 +41,7 @@ import {
   patchBpmnDiagramInterchange,
   patchBpmnElementStyle,
 } from "./sourcePatches";
+import { available, disabled, presentationAvailability } from "../presentation";
 
 export type BpmnDocumentSnapshot = DocumentSnapshot<
   BpmnSemanticModel,
@@ -194,73 +194,103 @@ export class BpmnDocumentAdapter implements DocumentAdapter<BpmnDocumentSnapshot
     return readBpmnSource(source, hint).kind === "bpmn";
   }
 
-  open(source: string, hint?: DocumentHint): Promise<BpmnDocumentSnapshot> {
-    return this.#engine.open(source, hint);
+  async open(
+    source: string,
+    hint?: DocumentHint,
+  ): Promise<BpmnDocumentSnapshot> {
+    return this.#decorate(await this.#engine.open(source, hint));
   }
 
-  execute(
+  async execute(
     command: DocumentCommand,
   ): Promise<CommandResult<BpmnDocumentSnapshot>> {
-    return this.#engine.execute(command);
+    if (isTransactionCommand(command)) {
+      const result = await this.#engine.execute(command);
+      return { ...result, snapshot: this.#decorate(result.snapshot) };
+    }
+    return await this.#executePresentation(command);
   }
 
-  replaceSource(source: string): Promise<BpmnDocumentSnapshot> {
-    return this.#engine.replaceSource(source);
+  async replaceSource(source: string): Promise<BpmnDocumentSnapshot> {
+    return (await this.execute({ type: "replace-source", source })).snapshot;
   }
 
   snapshot(): BpmnDocumentSnapshot {
-    return this.#engine.snapshot();
+    return this.#decorate(this.#engine.snapshot());
   }
 
-  async moveOrResize(
-    elementId: string,
-    bounds: BpmnBounds,
+  async #executePresentation(
+    command: PresentationCommand,
   ): Promise<CommandResult<BpmnDocumentSnapshot>> {
-    const edit = patchBpmnShapeBounds(
-      this.snapshot().source,
-      elementId,
-      bounds,
-    );
-    return this.#engine.execute({
-      type: "apply-patches",
-      patches: edit.patches,
-      reason: "visual",
-    });
+    this.#requireAvailable(command);
+    switch (command.type) {
+      case "move": {
+        const before =
+          this.snapshot().presentationModel!.shapes[command.elementId]!;
+        return await this.#patch(
+          patchBpmnShapeBounds(this.snapshot().source, command.elementId, {
+            ...before.bounds,
+            x: before.bounds.x + command.dx,
+            y: before.bounds.y + command.dy,
+          }).patches,
+          "visual",
+        );
+      }
+      case "resize":
+        return await this.#patch(
+          patchBpmnShapeBounds(
+            this.snapshot().source,
+            command.elementId,
+            command.bounds,
+          ).patches,
+          "visual",
+        );
+      case "route":
+        return await this.#patch(
+          patchBpmnEdgeWaypoints(
+            this.snapshot().source,
+            command.elementId,
+            command.waypoints,
+          ).patches,
+          "visual",
+        );
+      case "set-appearance":
+        return await this.#patch(
+          patchBpmnElementStyle(
+            this.snapshot().source,
+            command.elementId,
+            command.appearance,
+          ).patches,
+          "visual",
+        );
+      case "reset-layout":
+        return await this.#resetLayout();
+      case "set-attribute":
+      case "create-styling-rule":
+      case "set-spacing":
+      case "use-automatic-position":
+      case "cleanup-unmatched":
+        throw new CommandUnavailableError(
+          command.type,
+          `${command.type} is not supported for BPMN documents.`,
+        );
+    }
   }
 
-  async route(
-    elementId: string,
-    waypoints: readonly { readonly x: number; readonly y: number }[],
+  async #patch(
+    patches: readonly import("../../core/document/types").SourcePatch[],
+    reason: "visual" | "reset-layout",
   ): Promise<CommandResult<BpmnDocumentSnapshot>> {
-    const edit = patchBpmnEdgeWaypoints(
-      this.snapshot().source,
-      elementId,
-      waypoints,
-    );
-    return this.#engine.execute({
+    if (patches.length === 0) return { snapshot: this.snapshot(), patches: [] };
+    const result = await this.#engine.execute({
       type: "apply-patches",
-      patches: edit.patches,
-      reason: "visual",
+      patches,
+      reason,
     });
+    return { ...result, snapshot: this.#decorate(result.snapshot) };
   }
 
-  async style(
-    elementId: string,
-    style: Readonly<{ fill?: string; stroke?: string }>,
-  ): Promise<CommandResult<BpmnDocumentSnapshot>> {
-    const edit = patchBpmnElementStyle(
-      this.snapshot().source,
-      elementId,
-      style,
-    );
-    return this.#engine.execute({
-      type: "apply-patches",
-      patches: edit.patches,
-      reason: "visual",
-    });
-  }
-
-  async resetLayout(): Promise<CommandResult<BpmnDocumentSnapshot>> {
+  async #resetLayout(): Promise<CommandResult<BpmnDocumentSnapshot>> {
     const current = this.snapshot();
     const generated = await this.#layout.layout(current.source);
     if (generated.warnings.length > 0) {
@@ -271,20 +301,90 @@ export class BpmnDocumentAdapter implements DocumentAdapter<BpmnDocumentSnapshot
       );
     }
     const edit = patchBpmnDiagramInterchange(current.source, generated.source);
-    return this.#engine.execute({
-      type: "apply-patches",
-      patches: edit.patches,
-      reason: "reset-layout",
-    });
+    return await this.#patch(edit.patches, "reset-layout");
   }
 
   async recoverMissingDi(): Promise<BpmnDocumentSnapshot> {
     const current = this.snapshot();
     if (!current.presentationModel?.requiresLayout) return current;
-    return (await this.resetLayout()).snapshot;
+    return (await this.execute({ type: "reset-layout" })).snapshot;
   }
 
   dispose(): void {
     this.#layout.dispose();
   }
+
+  #requireAvailable(command: PresentationCommand): void {
+    const elementId = "elementId" in command ? command.elementId : undefined;
+    const item = this.#availability(elementId)[command.type];
+    if (item.state === "available") return;
+    throw new CommandUnavailableError(
+      command.type,
+      item.state === "disabled"
+        ? item.reason
+        : `${command.type} is not supported for BPMN documents.`,
+    );
+  }
+
+  #availability(elementId = this.#engine.snapshot().selectedElementId) {
+    const current = this.#engine.snapshot();
+    if (!current.commands.visualEditing) {
+      const reason =
+        current.diagnostics.find(({ severity }) => severity === "error")
+          ?.message ??
+        "Presentation editing is unavailable until the source is valid.";
+      const unavailable = disabled(reason);
+      return presentationAvailability({
+        move: unavailable,
+        resize: unavailable,
+        route: unavailable,
+        "set-appearance": unavailable,
+        "reset-layout": unavailable,
+      });
+    }
+    const model = current.semanticModel!;
+    const selected = model.elements.find(({ id }) => id === elementId);
+    const shape = elementId
+      ? current.presentationModel?.shapes[elementId]
+      : undefined;
+    const edge = elementId
+      ? current.presentationModel?.edges[elementId]
+      : undefined;
+    const reason = disabled(
+      elementId
+        ? "The selected element does not support this action."
+        : "Select an element.",
+    );
+    return presentationAvailability({
+      move: shape ? available : reason,
+      resize: shape ? available : reason,
+      route: edge ? available : reason,
+      "set-appearance": selected ? available : reason,
+      "reset-layout": available,
+    });
+  }
+
+  #decorate(snapshot: BpmnDocumentSnapshot): BpmnDocumentSnapshot {
+    const id = snapshot.selectedElementId;
+    const selected = snapshot.semanticModel?.elements.find(
+      (element) => element.id === id,
+    );
+    const provisional = Object.freeze({
+      ...snapshot,
+      ...(id ? { selectedElementLabel: selected?.name || id } : {}),
+    });
+    return Object.freeze({
+      ...provisional,
+      commands: Object.freeze({
+        ...provisional.commands,
+        presentation: this.#availability(id),
+      }),
+    });
+  }
+}
+
+function isTransactionCommand(
+  command: DocumentCommand,
+): command is Exclude<DocumentCommand, PresentationCommand> {
+  return ["replace-source", "select", "undo", "redo"].includes(command.type);
 }

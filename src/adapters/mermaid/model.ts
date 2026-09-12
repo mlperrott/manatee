@@ -1,4 +1,5 @@
 import type { DocumentDiagnostic } from "../../core/document/types";
+import type { MermaidScene } from "./layout/types";
 
 export type MermaidFamily =
   "flowchart" | "swimlane" | "c4-context" | "c4-container";
@@ -82,6 +83,7 @@ export interface MermaidPresentationModel {
 export interface MermaidView {
   readonly family: MermaidFamily;
   readonly model: MermaidSemanticModel;
+  readonly scene?: MermaidScene;
 }
 
 export const MERMAID_ADAPTER_ID = "manatee/mermaid" as const;

@@ -55,18 +55,13 @@ test("lays out in a worker and renders the same SVG for preview and export", asy
     const api = (await import(moduleUrl)) as {
       MermaidDocumentAdapter: new () => {
         open(source: string): Promise<{
-          semanticModel?: unknown;
-          presentationModel?: { metadata?: Readonly<Record<string, unknown>> };
-        }>;
-      };
-      MermaidLayout: new () => {
-        layout(request: {
-          model: unknown;
-          metadata: Readonly<Record<string, unknown>> | undefined;
-        }): Promise<{
-          width: number;
-          nodes: readonly unknown[];
-          relationships: readonly unknown[];
+          view?: {
+            scene?: {
+              width: number;
+              nodes: readonly unknown[];
+              relationships: readonly unknown[];
+            };
+          };
         }>;
         dispose(): void;
       };
@@ -74,15 +69,12 @@ test("lays out in a worker and renders the same SVG for preview and export", asy
       renderMermaidExportSvg(scene: unknown): string;
     };
     const documentAdapter = new api.MermaidDocumentAdapter();
-    const snapshot = await documentAdapter.open(
-      "flowchart LR\nA[**Start**] --> B{Ready?}\nB --> C[(Store)]",
-    );
-    const layout = new api.MermaidLayout();
     try {
-      const scene = await layout.layout({
-        model: snapshot.semanticModel,
-        metadata: snapshot.presentationModel?.metadata,
-      });
+      const snapshot = await documentAdapter.open(
+        "flowchart LR\nA[**Start**] --> B{Ready?}\nB --> C[(Store)]",
+      );
+      const scene = snapshot.view?.scene;
+      if (!scene) throw new Error("Mermaid adapter did not produce a scene.");
       const preview = api.renderMermaidPreviewSvg(scene);
       return {
         width: scene.width,
@@ -92,7 +84,7 @@ test("lays out in a worker and renders the same SVG for preview and export", asy
         hasBold: preview.includes('font-weight="700"'),
       };
     } finally {
-      layout.dispose();
+      documentAdapter.dispose();
     }
   });
 

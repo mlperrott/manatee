@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { CommandUnavailableError } from "../../core/document/DocumentEngine";
 import { UnsafeSourcePatchError } from "../../core/source/patches";
 import {
   addBpmnExportAttribution,
@@ -111,7 +112,7 @@ describe("BpmnDocumentAdapter", () => {
         recovered.semanticModel?.elements.map((element) => element.type),
       ).toContain(type);
       const firstSource = recovered.source;
-      const reset = await adapter.resetLayout();
+      const reset = await adapter.execute({ type: "reset-layout" });
       expect(reset.snapshot.source).toBe(firstSource);
       adapter.dispose();
     },
@@ -125,11 +126,24 @@ describe("BpmnDocumentAdapter", () => {
     const processXml = /<bpmn:process[\s\S]*<\/bpmn:process>/u.exec(
       before.source,
     )?.[0];
-    const moved = await adapter.moveOrResize("Task_Review", {
-      x: 320,
-      y: 180,
-      width: 140,
-      height: 90,
+    const originalBounds = before.presentationModel?.shapes.Task_Review?.bounds;
+    const translated = await adapter.execute({
+      type: "move",
+      elementId: "Task_Review",
+      dx: 15,
+      dy: 10,
+    });
+    expect(
+      translated.snapshot.presentationModel?.shapes.Task_Review?.bounds,
+    ).toEqual({
+      ...originalBounds,
+      x: (originalBounds?.x ?? 0) + 15,
+      y: (originalBounds?.y ?? 0) + 10,
+    });
+    const moved = await adapter.execute({
+      type: "resize",
+      elementId: "Task_Review",
+      bounds: { x: 320, y: 180, width: 140, height: 90 },
     });
     expect(moved.patches).toHaveLength(4);
     expect(
@@ -144,17 +158,22 @@ describe("BpmnDocumentAdapter", () => {
       /<bpmn:process[\s\S]*<\/bpmn:process>/u.exec(moved.snapshot.source)?.[0],
     ).toBe(processXml);
 
-    const routed = await adapter.route("Association_1", [
-      { x: 390, y: 225 },
-      { x: 480, y: 225 },
-      { x: 480, y: 340 },
-    ]);
+    const routed = await adapter.execute({
+      type: "route",
+      elementId: "Association_1",
+      waypoints: [
+        { x: 390, y: 225 },
+        { x: 480, y: 225 },
+        { x: 480, y: 340 },
+      ],
+    });
     expect(
       routed.snapshot.presentationModel?.edges.Association_1?.waypoints,
     ).toHaveLength(3);
-    const styled = await adapter.style("Task_Review", {
-      fill: "#fee2e2",
-      stroke: "#dc2626",
+    const styled = await adapter.execute({
+      type: "set-appearance",
+      elementId: "Task_Review",
+      appearance: { fill: "#fee2e2", stroke: "#dc2626" },
     });
     expect(styled.snapshot.presentationModel?.styles.Task_Review).toEqual({
       fill: "#fee2e2",
@@ -204,7 +223,7 @@ describe("BpmnDocumentAdapter", () => {
     );
     const opened = await adapter.open(partial);
     expect(opened.presentationModel?.requiresLayout).toBe(true);
-    const recovered = await adapter.resetLayout();
+    const recovered = await adapter.execute({ type: "reset-layout" });
     expect(recovered.snapshot.presentationModel?.requiresLayout).toBe(false);
     expect(recovered.snapshot.commands.undo).toBe(true);
     expect((await adapter.execute({ type: "undo" })).snapshot.source).toBe(
@@ -218,9 +237,17 @@ describe("BpmnDocumentAdapter", () => {
     await adapter.open(await fixture("process-missing-di.bpmn"));
     await adapter.recoverMissingDi();
     await expect(
-      adapter.style("Task_Review", { fill: "url(https://example.com/x)" }),
+      adapter.execute({
+        type: "set-appearance",
+        elementId: "Task_Review",
+        appearance: { fill: "url(https://example.com/x)" },
+      }),
     ).rejects.toBeInstanceOf(UnsafeSourcePatchError);
-    const styled = await adapter.style("Task_Review", { fill: "#ffffff" });
+    const styled = await adapter.execute({
+      type: "set-appearance",
+      elementId: "Task_Review",
+      appearance: { fill: "#ffffff" },
+    });
     const unknown = styled.snapshot.source.replace(
       'version="1"',
       'version="2"',
@@ -228,6 +255,17 @@ describe("BpmnDocumentAdapter", () => {
     const reopened = await adapter.open(unknown);
     expect(reopened.valid).toBe(true);
     expect(reopened.commands.visualEditing).toBe(false);
+    expect(reopened.commands.presentation["set-appearance"]).toMatchObject({
+      state: "disabled",
+    });
+    await expect(
+      adapter.execute({
+        type: "set-appearance",
+        elementId: "Task_Review",
+        appearance: { fill: "#ffffff" },
+      }),
+    ).rejects.toBeInstanceOf(CommandUnavailableError);
+    expect(adapter.snapshot().source).toBe(unknown);
     expect(reopened.diagnostics.map(({ code }) => code)).toContain(
       "bpmn.metadata.unknown-version",
     );
@@ -236,7 +274,11 @@ describe("BpmnDocumentAdapter", () => {
       '<manatee:presentation$1version="1" mystery="keep"><!-- keep style comment -->',
     );
     await adapter.open(withUnknown);
-    const updated = await adapter.style("Task_Review", { stroke: "#111827" });
+    const updated = await adapter.execute({
+      type: "set-appearance",
+      elementId: "Task_Review",
+      appearance: { stroke: "#111827" },
+    });
     expect(updated.snapshot.source).toContain('mystery="keep"');
     expect(updated.snapshot.source).toContain("<!-- keep style comment -->");
     adapter.dispose();
@@ -256,7 +298,9 @@ describe("BpmnDocumentAdapter", () => {
     const adapter = new BpmnDocumentAdapter(rejectingLayout);
     await adapter.open(withDi.source);
     const authored = adapter.snapshot().source;
-    await expect(adapter.resetLayout()).rejects.toThrow("unsupported fixture");
+    await expect(adapter.execute({ type: "reset-layout" })).rejects.toThrow(
+      "unsupported fixture",
+    );
     expect(adapter.snapshot().source).toBe(authored);
     adapter.dispose();
   });

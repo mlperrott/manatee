@@ -37,10 +37,11 @@ test("lazy loads, recovers, mounts, exports, and disposes BPMN", async ({
           source: string;
           presentationModel?: unknown;
         }>;
-        style(
-          elementId: string,
-          style: { fill: string; stroke: string },
-        ): Promise<{
+        execute(command: {
+          type: "set-appearance";
+          elementId: string;
+          appearance: { fill: string; stroke: string };
+        }): Promise<{
           snapshot: { source: string; presentationModel?: unknown };
         }>;
         dispose(): void;
@@ -59,9 +60,10 @@ test("lazy loads, recovers, mounts, exports, and disposes BPMN", async ({
     const adapter = new api.BpmnDocumentAdapter();
     const opened = await adapter.open(bpmnSource);
     const recovered = await adapter.recoverMissingDi();
-    const styled = await adapter.style("Task_1", {
-      fill: "#fee2e2",
-      stroke: "#dc2626",
+    const styled = await adapter.execute({
+      type: "set-appearance",
+      elementId: "Task_1",
+      appearance: { fill: "#fee2e2", stroke: "#dc2626" },
     });
     const host = document.createElement("div");
     host.style.cssText = "width:900px;height:600px;position:fixed;inset:0";

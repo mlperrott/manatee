@@ -20,9 +20,7 @@ export function BpmnSurface(props: BpmnSurfaceProps) {
     void canvas
       .mount(container, props.source, {
         ...(props.presentation ? { presentation: props.presentation } : {}),
-        ...(props.onGeometryChange
-          ? { onGeometryChange: props.onGeometryChange }
-          : {}),
+        ...(props.onCommand ? { onCommand: props.onCommand } : {}),
         ...(props.onSelectionChange
           ? { onSelectionChange: props.onSelectionChange }
           : {}),

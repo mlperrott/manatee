@@ -27,21 +27,12 @@ test("renders the supported ceiling within the release budget", async ({
     const moduleUrl = "/src/adapters/mermaid/index.ts";
     const api = await import(moduleUrl);
     const adapter = new api.MermaidDocumentAdapter();
-    const layout = new api.MermaidLayout();
     try {
-      const warmup = await adapter.open("flowchart LR\n  warmup --> ready", {
-        kind: "mermaid",
-      });
-      await layout.layout({
-        model: warmup.semanticModel!,
-        metadata: warmup.presentationModel?.metadata,
-      });
+      await adapter.open("flowchart LR\n  warmup --> ready");
       const started = performance.now();
-      const snapshot = await adapter.open(source, { kind: "mermaid" });
-      const scene = await layout.layout({
-        model: snapshot.semanticModel!,
-        metadata: snapshot.presentationModel?.metadata,
-      });
+      const snapshot = await adapter.open(source);
+      const scene = snapshot.view?.scene;
+      if (!scene) throw new Error("Mermaid adapter did not produce a scene.");
       api.renderMermaidSvg(scene);
       return {
         valid: snapshot.valid,
@@ -51,7 +42,7 @@ test("renders the supported ceiling within the release budget", async ({
         elapsed: performance.now() - started,
       };
     } finally {
-      layout.dispose();
+      adapter.dispose();
     }
   }, releaseDiagram());
 

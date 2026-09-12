@@ -1,9 +1,9 @@
 import { Match, Switch } from "solid-js";
 
-import type { AppStatus } from "./editorUiState";
+import type { DocumentSessionStatus } from "../core/document/DocumentSession";
 
 interface StatusNoticeProps {
-  status: AppStatus;
+  status: DocumentSessionStatus;
 }
 
 export function StatusNotice(props: StatusNoticeProps) {

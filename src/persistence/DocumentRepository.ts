@@ -1,18 +1,12 @@
-import type { DocumentKind } from "../core/document/types";
+import type {
+  DocumentStore,
+  SavedDocument,
+} from "../core/document/DocumentSession";
 
-export interface SavedDocument {
-  readonly filename: string;
-  readonly kind: DocumentKind;
-  readonly source: string;
-  readonly lastValidSource?: string;
-  readonly savedAt: number;
-}
-
-export interface DocumentRepository {
-  load(): Promise<SavedDocument | undefined>;
-  save(document: SavedDocument): Promise<void>;
-  clear(): Promise<void>;
-}
+export type {
+  DocumentStore as DocumentRepository,
+  SavedDocument,
+} from "../core/document/DocumentSession";
 
 const DATABASE = "manatee-studio";
 const STORE = "documents";
@@ -26,7 +20,7 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-export class IndexedDbDocumentRepository implements DocumentRepository {
+export class IndexedDbDocumentRepository implements DocumentStore {
   readonly #indexedDb: IDBFactory;
 
   constructor(indexedDb: IDBFactory = indexedDB) {

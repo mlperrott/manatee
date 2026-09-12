@@ -8,39 +8,31 @@ import {
 } from "solid-js";
 import { createStore } from "solid-js";
 
-import type {
-  BpmnCanvas,
-  BpmnGeometryChange,
-} from "./adapters/bpmn/BpmnCanvas";
+import type { BpmnCanvas } from "./adapters/bpmn/BpmnCanvas";
 import type {
   BpmnDocumentAdapter,
   BpmnDocumentSnapshot,
 } from "./adapters/bpmn/BpmnDocumentAdapter";
 import {
   MermaidDocumentAdapter,
-  MermaidLayout,
   renderMermaidSvg,
   type MermaidDocumentSnapshot,
-  type MermaidScene,
 } from "./adapters/mermaid";
 import { initialEditorUiState, sourceToggleLabel } from "./app/editorUiState";
 import { MermaidSurface } from "./app/MermaidSurface";
 import { StatusNotice } from "./app/StatusNotice";
-import {
-  findUnmatchedMetadata,
-  patchManateeMetadata,
-} from "./core/metadata/manateeMetadata";
-import type { MetadataEdit, MetadataValue } from "./core/metadata/types";
+import type {
+  DocumentCommand,
+  PresentationCommandType,
+} from "./core/document/DocumentEngine";
+import { DocumentSession } from "./core/document/DocumentSession";
 import {
   copyPngOrDownload,
   downloadBlob,
   portableFilename,
   rasterizeSvg,
 } from "./export/DiagramExporter";
-import {
-  IndexedDbDocumentRepository,
-  type SavedDocument,
-} from "./persistence/DocumentRepository";
+import { IndexedDbDocumentRepository } from "./persistence/DocumentRepository";
 import "./app.css";
 
 const BpmnSurface = lazy(async () => {
@@ -56,61 +48,74 @@ const mermaidExample = `flowchart LR
   fulfil --> done([Complete])
 `;
 
-type ActiveAdapter = MermaidDocumentAdapter | BpmnDocumentAdapter;
 type ActiveSnapshot = MermaidDocumentSnapshot | BpmnDocumentSnapshot;
 
 function selectedLabel(current: ActiveSnapshot | undefined): string {
-  const id = current?.selectedElementId;
-  if (!current || !id) return "No selection";
-  if (current.kind === "bpmn") {
-    const bpmn = current as BpmnDocumentSnapshot;
-    return (
-      bpmn.semanticModel?.elements.find((item) => item.id === id)?.name || id
-    );
-  }
-  const mermaid = current as MermaidDocumentSnapshot;
-  return (
-    mermaid.semanticModel?.nodes.find((item) => item.id === id)?.label ??
-    mermaid.semanticModel?.groups.find((item) => item.id === id)?.label ??
-    mermaid.semanticModel?.relationships.find((item) => item.id === id)
-      ?.label ??
-    id
-  );
+  return current?.selectedElementLabel ?? "No selection";
 }
 
 export default function App() {
   const [ui, setUi] = createStore(initialEditorUiState());
-  const [snapshot, setSnapshot] = createSignal<ActiveSnapshot>();
-  const [source, setSource] = createSignal(mermaidExample);
-  const [scene, setScene] = createSignal<MermaidScene>();
   const [zoom, setZoom] = createSignal(1);
   const [fill, setFill] = createSignal("#e0f0ec");
   const [stroke, setStroke] = createSignal("#2d817c");
   const [attributeName, setAttributeName] = createSignal("owner");
   const [attributeValue, setAttributeValue] = createSignal("operations");
-  const [filename, setFilename] = createSignal("request-flow.mmd");
-  const [recovery, setRecovery] = createSignal<SavedDocument>();
   const [pngScale, setPngScale] = createSignal(2);
   const [pngBackground, setPngBackground] = createSignal<
     "#ffffff" | "transparent"
   >("#ffffff");
   const [exportMessage, setExportMessage] = createSignal("");
-  const layout = new MermaidLayout();
   const repository = new IndexedDbDocumentRepository();
-  let adapter: ActiveAdapter = new MermaidDocumentAdapter();
   let bpmnCanvas: BpmnCanvas | undefined;
   let stage: HTMLElement | undefined;
-  let sourceTimer: ReturnType<typeof setTimeout> | undefined;
   let fileInput: HTMLInputElement | undefined;
   let fileHandle: FileSystemFileHandle | undefined;
-  let lastValidSource = mermaidExample;
-  let persistenceReady = false;
-  let revision = 0;
-  let ignoreBpmnGeometry = true;
+
+  const documentSession = new DocumentSession({
+    adapters: {
+      mermaid: { create: () => new MermaidDocumentAdapter() },
+      bpmn: {
+        create: async () => {
+          const { BpmnDocumentAdapter } =
+            await import("./adapters/bpmn/BpmnDocumentAdapter");
+          return new BpmnDocumentAdapter();
+        },
+        prepare: async (adapter) =>
+          await (adapter as unknown as BpmnDocumentAdapter).recoverMissingDi(),
+      },
+    },
+    store: repository,
+    initialFilename: "request-flow.mmd",
+    initialSource: mermaidExample,
+    present: async (next) => {
+      if (
+        next.kind === "bpmn" &&
+        next.valid &&
+        bpmnCanvas?.source() !== next.source
+      ) {
+        const bpmn = next as BpmnDocumentSnapshot;
+        await bpmnCanvas?.importSource(next.source, bpmn.presentationModel);
+      }
+    },
+  });
+  const [documentState, setDocumentState] = createSignal(
+    documentSession.state(),
+  );
+  const unsubscribeDocument = documentSession.subscribe(setDocumentState);
+  const snapshot = createMemo(
+    () => documentState().snapshot as ActiveSnapshot | undefined,
+  );
+  const source = createMemo(() => documentState().source);
+  const filename = createMemo(() => documentState().filename);
+  const recovery = createMemo(() => documentState().recovery);
 
   const svg = createMemo(() => {
     const current = snapshot();
-    const currentScene = scene();
+    const currentScene =
+      current?.kind === "mermaid"
+        ? (current as MermaidDocumentSnapshot).view?.scene
+        : undefined;
     return current?.kind === "mermaid" && currentScene
       ? renderMermaidSvg(currentScene, {
           ...(current.selectedElementId
@@ -122,159 +127,65 @@ export default function App() {
       : "";
   });
 
-  const fail = (error: unknown) => {
-    setUi((draft) => {
-      draft.status = {
-        kind: "error",
-        message: error instanceof Error ? error.message : String(error),
-      };
-    });
+  const fail = (error: unknown) => documentSession.reportError(error);
+  const execute = (command: DocumentCommand) =>
+    documentSession.execute(command);
+
+  const action = (type: PresentationCommandType) =>
+    snapshot()?.commands.presentation[type] ??
+    ({ state: "inapplicable" } as const);
+
+  const actionTitle = (type: PresentationCommandType): string | undefined => {
+    const availability = action(type);
+    return availability.state === "disabled" ? availability.reason : undefined;
   };
 
-  const present = async (next: ActiveSnapshot) => {
-    const currentRevision = ++revision;
-    setSnapshot(next);
-    setSource(next.source);
-    if (next.valid) lastValidSource = next.source;
-    if (next.kind === "mermaid" && next.semanticModel) {
-      const mermaid = next as MermaidDocumentSnapshot;
-      const nextScene = await layout.layout({
-        model: mermaid.semanticModel!,
-        metadata: mermaid.presentationModel?.metadata,
-      });
-      if (revision === currentRevision) setScene(nextScene);
-    } else if (
-      next.kind === "bpmn" &&
-      next.valid &&
-      bpmnCanvas?.source() !== next.source
-    ) {
-      const bpmn = next as BpmnDocumentSnapshot;
-      ignoreBpmnGeometry = true;
-      await bpmnCanvas?.importSource(next.source, bpmn.presentationModel);
-      queueMicrotask(() => {
-        ignoreBpmnGeometry = false;
-      });
-    }
-    setUi((draft) => {
-      draft.status = { kind: "ready" };
-    });
-    if (persistenceReady) {
-      void repository
-        .save({
-          filename: filename(),
-          kind: next.kind,
-          source: next.source,
-          lastValidSource,
-          savedAt: Date.now(),
-        })
-        .catch(fail);
-    }
-  };
-
-  const execute = async (command: Parameters<ActiveAdapter["execute"]>[0]) => {
-    try {
-      const result = await adapter.execute(command);
-      await present(result.snapshot as ActiveSnapshot);
-    } catch (error) {
-      fail(error);
-    }
-  };
+  const applicable = (type: PresentationCommandType): boolean =>
+    action(type).state !== "inapplicable";
 
   const openMermaid = async () => {
-    if ("dispose" in adapter) adapter.dispose();
-    adapter = new MermaidDocumentAdapter();
     bpmnCanvas = undefined;
     setZoom(1);
-    setFilename("request-flow.mmd");
     fileHandle = undefined;
-    setUi((draft) => {
-      draft.status = { kind: "loading", message: "Opening Mermaid example…" };
+    await documentSession.open({
+      kind: "mermaid",
+      filename: "request-flow.mmd",
+      source: mermaidExample,
     });
-    await present(await adapter.open(mermaidExample, { kind: "mermaid" }));
   };
 
   const openBpmn = async () => {
-    if ("dispose" in adapter) adapter.dispose();
-    setScene(undefined);
     bpmnCanvas = undefined;
     setZoom(1);
-    setFilename("review-process.bpmn");
     fileHandle = undefined;
-    setUi((draft) => {
-      draft.status = { kind: "loading", message: "Opening BPMN example…" };
-    });
-    try {
-      const [{ BpmnDocumentAdapter }, fixture] = await Promise.all([
-        import("./adapters/bpmn/BpmnDocumentAdapter"),
-        import("./adapters/bpmn/fixtures/process-missing-di.bpmn?raw"),
-      ]);
-      const bpmn = new BpmnDocumentAdapter();
-      adapter = bpmn;
-      await bpmn.open(fixture.default, { kind: "bpmn" });
-      await present(await bpmn.recoverMissingDi());
-    } catch (error) {
-      fail(error);
-    }
-  };
-
-  const openPortableDocument = async (
-    documentSource: string,
-    documentFilename: string,
-    kind: "mermaid" | "bpmn",
-    recoverySource?: string,
-  ) => {
-    if ("dispose" in adapter) adapter.dispose();
-    bpmnCanvas = undefined;
-    setScene(undefined);
-    setFilename(documentFilename);
-    setZoom(1);
-    setUi((draft) => {
-      draft.status = {
-        kind: "loading",
-        message: `Opening ${documentFilename}…`,
-      };
-    });
-    try {
-      if (kind === "mermaid") {
-        const mermaid = new MermaidDocumentAdapter();
-        adapter = mermaid;
-        const opened = await mermaid.open(recoverySource ?? documentSource, {
-          kind,
-          filename: documentFilename,
-        });
-        await present(
-          recoverySource && recoverySource !== documentSource
-            ? await mermaid.replaceSource(documentSource)
-            : opened,
-        );
-      } else {
-        const { BpmnDocumentAdapter } =
-          await import("./adapters/bpmn/BpmnDocumentAdapter");
-        const bpmn = new BpmnDocumentAdapter();
-        adapter = bpmn;
-        await bpmn.open(recoverySource ?? documentSource, {
-          kind,
-          filename: documentFilename,
-        });
-        const opened =
-          recoverySource && recoverySource !== documentSource
-            ? await bpmn.replaceSource(documentSource)
-            : await bpmn.recoverMissingDi();
-        await present(opened);
-      }
-    } catch (error) {
-      fail(error);
-    }
+    await documentSession.open(
+      {
+        kind: "bpmn",
+        filename: "review-process.bpmn",
+        source:
+          import("./adapters/bpmn/fixtures/process-missing-di.bpmn?raw").then(
+            (fixture) => fixture.default,
+          ),
+      },
+      "Opening BPMN example…",
+    );
   };
 
   const openFile = async (file: File) => {
-    const documentSource = await file.text();
-    const kind =
-      file.name.toLowerCase().endsWith(".bpmn") ||
-      /<(?:\w+:)?definitions\b/u.test(documentSource)
-        ? "bpmn"
-        : "mermaid";
-    await openPortableDocument(documentSource, file.name, kind);
+    bpmnCanvas = undefined;
+    setZoom(1);
+    await documentSession.open(
+      file.text().then((documentSource) => ({
+        kind:
+          file.name.toLowerCase().endsWith(".bpmn") ||
+          /<(?:\w+:)?definitions\b/u.test(documentSource)
+            ? ("bpmn" as const)
+            : ("mermaid" as const),
+        filename: file.name,
+        source: documentSource,
+      })),
+      `Opening ${file.name}…`,
+    );
   };
 
   const chooseFile = async () => {
@@ -305,7 +216,6 @@ export default function App() {
       if (!handle) return;
       fileHandle = handle;
       await openFile(await handle.getFile());
-      fileHandle = handle;
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       fail(error);
@@ -389,227 +299,23 @@ export default function App() {
     }
   };
 
-  const recoverAutosave = async () => {
-    const saved = recovery();
-    if (!saved) return;
-    persistenceReady = true;
-    setRecovery(undefined);
-    lastValidSource = saved.lastValidSource ?? saved.source;
-    await openPortableDocument(
-      saved.source,
-      saved.filename,
-      saved.kind,
-      saved.lastValidSource,
-    );
-  };
-
-  const discardAutosave = async () => {
-    await repository.clear();
-    setRecovery(undefined);
-    persistenceReady = true;
-    await openMermaid();
-  };
-
-  const replaceSource = (value: string) => {
-    setSource(value);
-    if (sourceTimer) clearTimeout(sourceTimer);
-    sourceTimer = setTimeout(() => {
-      void adapter
-        .replaceSource(value)
-        .then((next) => present(next as ActiveSnapshot))
-        .catch(fail);
-    }, 180);
-  };
-
-  const editMermaid = async (edits: readonly MetadataEdit[]) => {
-    if (!(adapter instanceof MermaidDocumentAdapter)) return;
-    const patched = patchManateeMetadata(adapter.snapshot().source, edits);
-    await execute({
-      type: "apply-patches",
-      patches: patched.patches,
-      reason: "visual",
-    });
-  };
-
-  const nudge = async (id: string, dx: number, dy: number) => {
-    const currentScene = scene();
-    if (!currentScene) return;
-    const node = currentScene.nodes.find((item) => item.id === id);
-    const group = currentScene.groups.find((item) => item.id === id);
-    const item = node ?? group;
-    if (!item) return;
-    await editMermaid([
-      {
-        type: "set",
-        path: ["elements", node ? "nodes" : "groups", id, "position"],
-        value: {
-          x: Math.max(0, Math.round(item.x + dx)),
-          y: Math.max(0, Math.round(item.y + dy)),
-        },
-      },
-    ]);
-  };
-
   const styleSelection = async () => {
     const current = snapshot();
     const id = current?.selectedElementId;
-    if (!current || !id || !current.commands.visualEditing) return;
-    if (current.kind === "bpmn" && "style" in adapter) {
-      try {
-        await present(
-          (await adapter.style(id, { fill: fill(), stroke: stroke() }))
-            .snapshot,
-        );
-      } catch (error) {
-        fail(error);
-      }
-      return;
-    }
-    if (current.kind !== "mermaid") return;
-    const mermaid = current as MermaidDocumentSnapshot;
-    const node = mermaid.semanticModel?.nodes.some((item) => item.id === id);
-    const group = mermaid.semanticModel?.groups.some((item) => item.id === id);
-    if (node || group) {
-      await editMermaid([
-        {
-          type: "set",
-          path: ["elements", node ? "nodes" : "groups", id, "style", "fill"],
-          value: fill(),
-        },
-        {
-          type: "set",
-          path: [
-            "elements",
-            node ? "nodes" : "groups",
-            id,
-            "style",
-            "outline",
-            "color",
-          ],
-          value: stroke(),
-        },
-      ]);
-    } else {
-      await editMermaid([
-        {
-          type: "set",
-          path: ["elements", "relationships", "byId", id, "style", "color"],
-          value: stroke(),
-        },
-      ]);
-    }
-  };
-
-  const resetLayout = async () => {
-    const current = snapshot();
-    if (!current?.commands.visualEditing) return;
-    if (current.kind === "bpmn" && "resetLayout" in adapter) {
-      try {
-        await present((await adapter.resetLayout()).snapshot);
-      } catch (error) {
-        fail(error);
-      }
-      return;
-    }
-    if (current.kind === "mermaid" && current.semanticModel) {
-      const mermaid = current as MermaidDocumentSnapshot;
-      await editMermaid([
-        ...mermaid.semanticModel!.nodes.map(({ id }) => ({
-          type: "remove" as const,
-          path: ["elements", "nodes", id, "position"] as const,
-        })),
-        ...mermaid.semanticModel!.groups.map(({ id }) => ({
-          type: "remove" as const,
-          path: ["elements", "groups", id, "position"] as const,
-        })),
-      ]);
-    }
-  };
-
-  const cleanUnused = async () => {
-    const current = snapshot();
-    if (current?.kind !== "mermaid" || !current.semanticModel) return;
-    const mermaid = current as MermaidDocumentSnapshot;
-    const model = mermaid.semanticModel!;
-    const unused = findUnmatchedMetadata(mermaid.presentationModel?.metadata, {
-      nodes: new Set(model.nodes.map(({ id }) => id)),
-      groups: new Set(
-        model.groups.filter(({ kind }) => kind !== "lane").map(({ id }) => id),
-      ),
-      lanes: new Set(
-        model.groups.filter(({ kind }) => kind === "lane").map(({ id }) => id),
-      ),
-      relationships: new Set(model.relationships.map(({ id }) => id)),
-      relationshipMatchers: new Set(),
+    if (!current || !id) return;
+    await execute({
+      type: "set-appearance",
+      elementId: id,
+      appearance: { fill: fill(), stroke: stroke() },
     });
-    if (unused.edits.length > 0) await editMermaid(unused.edits);
-  };
-
-  const useAutomaticPosition = async () => {
-    const current = snapshot();
-    const id = current?.selectedElementId;
-    if (current?.kind !== "mermaid" || !id) return;
-    const mermaid = current as MermaidDocumentSnapshot;
-    const category = mermaid.semanticModel?.nodes.some((item) => item.id === id)
-      ? "nodes"
-      : "groups";
-    await editMermaid([
-      { type: "remove", path: ["elements", category, id, "position"] },
-    ]);
-  };
-
-  const geometryChanged = (changes: readonly BpmnGeometryChange[]) => {
-    const current = snapshot() as BpmnDocumentSnapshot | undefined;
-    const id = current?.selectedElementId;
-    if (
-      ignoreBpmnGeometry ||
-      current?.kind !== "bpmn" ||
-      !id ||
-      !("moveOrResize" in adapter)
-    )
-      return;
-    const change = changes.find((item) => item.elementId === id);
-    const shapeBefore = current.presentationModel?.shapes[id]?.bounds;
-    const edgeBefore = current.presentationModel?.edges[id]?.waypoints;
-    const operation = change?.bounds
-      ? shapeBefore &&
-        shapeBefore.x === change.bounds.x &&
-        shapeBefore.y === change.bounds.y &&
-        shapeBefore.width === change.bounds.width &&
-        shapeBefore.height === change.bounds.height
-        ? undefined
-        : adapter.moveOrResize(id, change.bounds)
-      : change?.waypoints &&
-          JSON.stringify(edgeBefore) !== JSON.stringify(change.waypoints)
-        ? adapter.route(id, change.waypoints)
-        : undefined;
-    if (!operation) return;
-    ignoreBpmnGeometry = true;
-    void operation
-      .then(({ snapshot: next }) => present(next))
-      .catch(fail)
-      .finally(() => {
-        ignoreBpmnGeometry = false;
-      });
   };
 
   onSettled(() => {
-    void repository
-      .load()
-      .then(async (saved) => {
-        if (saved) {
-          setRecovery(saved);
-          await openMermaid();
-        } else {
-          persistenceReady = true;
-          await openMermaid();
-        }
-      })
-      .catch((error) => {
-        persistenceReady = true;
-        fail(error);
-        void openMermaid();
-      });
+    void documentSession.initialize({
+      kind: "mermaid",
+      filename: "request-flow.mmd",
+      source: mermaidExample,
+    });
     if (!stage) return;
     const measure = () =>
       setUi((draft) => {
@@ -622,9 +328,8 @@ export default function App() {
     measure();
     return () => {
       observer.disconnect();
-      if (sourceTimer) clearTimeout(sourceTimer);
-      layout.dispose();
-      if ("dispose" in adapter) adapter.dispose();
+      unsubscribeDocument();
+      documentSession.dispose();
     };
   });
 
@@ -773,7 +478,7 @@ export default function App() {
           </button>
         </nav>
       </header>
-      <StatusNotice status={ui.status} />
+      <StatusNotice status={documentState().status} />
       <Show when={recovery()}>
         {(readSaved) => (
           <section class="recovery-banner" aria-label="Autosave recovery">
@@ -781,10 +486,16 @@ export default function App() {
               <strong>Recover autosaved work?</strong>
               {readSaved().filename} was edited in this browser.
             </span>
-            <button type="button" onClick={() => void recoverAutosave()}>
+            <button
+              type="button"
+              onClick={() => void documentSession.recoverAutosave()}
+            >
               Recover
             </button>
-            <button type="button" onClick={() => void discardAutosave()}>
+            <button
+              type="button"
+              onClick={() => void documentSession.discardAutosave()}
+            >
               Discard
             </button>
           </section>
@@ -807,7 +518,9 @@ export default function App() {
               aria-label="Diagram source"
               value={source()}
               spellcheck={false}
-              onInput={(event) => replaceSource(event.currentTarget.value)}
+              onInput={(event) =>
+                documentSession.editSource(event.currentTarget.value)
+              }
             />
             <div
               class="source-status"
@@ -876,8 +589,9 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => void resetLayout()}
-                disabled={!snapshot()?.commands.visualEditing}
+                onClick={() => void execute({ type: "reset-layout" })}
+                disabled={action("reset-layout").state !== "available"}
+                title={actionTitle("reset-layout")}
               >
                 Reset layout
               </button>
@@ -932,10 +646,9 @@ export default function App() {
                     onSelectionChange={(id) =>
                       void execute({ type: "select", elementId: id })
                     }
-                    onGeometryChange={geometryChanged}
+                    onCommand={(command) => execute(command)}
                     onReady={(canvas) => {
                       bpmnCanvas = canvas;
-                      ignoreBpmnGeometry = false;
                     }}
                     onError={fail}
                   />
@@ -950,7 +663,9 @@ export default function App() {
                 onSelect={(id) =>
                   void execute({ type: "select", elementId: id })
                 }
-                onNudge={(id, dx, dy) => void nudge(id, dx, dy)}
+                onNudge={(elementId, dx, dy) =>
+                  void execute({ type: "move", elementId, dx, dy })
+                }
               />
             </Show>
           </Show>
@@ -1013,7 +728,10 @@ export default function App() {
                 <strong>{selectedLabel(snapshot())}</strong>
                 <code>{snapshot()?.selectedElementId}</code>
               </div>
-              <fieldset disabled={!snapshot()?.commands.visualEditing}>
+              <fieldset
+                disabled={action("set-appearance").state !== "available"}
+                title={actionTitle("set-appearance")}
+              >
                 <legend>Appearance</legend>
                 <label>
                   Fill{" "}
@@ -1041,8 +759,18 @@ export default function App() {
                   Apply appearance
                 </button>
               </fieldset>
-              <Show when={snapshot()?.kind === "mermaid"}>
-                <fieldset disabled={!snapshot()?.commands.visualEditing}>
+              <Show
+                when={
+                  applicable("set-attribute") ||
+                  applicable("create-styling-rule")
+                }
+              >
+                <fieldset
+                  disabled={
+                    action("set-attribute").state !== "available" &&
+                    action("create-styling-rule").state !== "available"
+                  }
+                >
                   <legend>Attributes & rules</legend>
                   <label>
                     Attribute name{" "}
@@ -1070,20 +798,15 @@ export default function App() {
                     onClick={() => {
                       const id = snapshot()?.selectedElementId;
                       if (id && attributeName())
-                        void editMermaid([
-                          {
-                            type: "set",
-                            path: [
-                              "elements",
-                              "nodes",
-                              id,
-                              "attributes",
-                              attributeName(),
-                            ],
-                            value: attributeValue() as MetadataValue,
-                          },
-                        ]);
+                        void execute({
+                          type: "set-attribute",
+                          elementId: id,
+                          name: attributeName(),
+                          value: attributeValue(),
+                        });
                     }}
+                    disabled={action("set-attribute").state !== "available"}
+                    title={actionTitle("set-attribute")}
                   >
                     Set attribute
                   </button>
@@ -1093,31 +816,22 @@ export default function App() {
                     onClick={() => {
                       const name = attributeName();
                       if (name)
-                        void editMermaid([
-                          {
-                            type: "set",
-                            path: ["rules"],
-                            value: [
-                              {
-                                match: {
-                                  attributes: {
-                                    [name]: { eq: attributeValue() },
-                                  },
-                                },
-                                style: {
-                                  fill: fill(),
-                                  outline: { color: stroke() },
-                                },
-                              },
-                            ],
-                          },
-                        ]);
+                        void execute({
+                          type: "create-styling-rule",
+                          attribute: name,
+                          value: attributeValue(),
+                          appearance: { fill: fill(), stroke: stroke() },
+                        });
                     }}
+                    disabled={
+                      action("create-styling-rule").state !== "available"
+                    }
+                    title={actionTitle("create-styling-rule")}
                   >
                     Create matching rule
                   </button>
                 </fieldset>
-                <fieldset disabled={!snapshot()?.commands.visualEditing}>
+                <fieldset>
                   <legend>Layout settings</legend>
                   <label>
                     Node spacing{" "}
@@ -1127,14 +841,14 @@ export default function App() {
                       max="96"
                       value="48"
                       onChange={(event) =>
-                        void editMermaid([
-                          {
-                            type: "set",
-                            path: ["layout", "spacing", "node"],
-                            value: Number(event.currentTarget.value),
-                          },
-                        ])
+                        void execute({
+                          type: "set-spacing",
+                          spacing: "node",
+                          value: Number(event.currentTarget.value),
+                        })
                       }
+                      disabled={action("set-spacing").state !== "available"}
+                      title={actionTitle("set-spacing")}
                     />
                   </label>
                   <label>
@@ -1145,27 +859,41 @@ export default function App() {
                       max="128"
                       value="72"
                       onChange={(event) =>
-                        void editMermaid([
-                          {
-                            type: "set",
-                            path: ["layout", "spacing", "layer"],
-                            value: Number(event.currentTarget.value),
-                          },
-                        ])
+                        void execute({
+                          type: "set-spacing",
+                          spacing: "layer",
+                          value: Number(event.currentTarget.value),
+                        })
                       }
+                      disabled={action("set-spacing").state !== "available"}
+                      title={actionTitle("set-spacing")}
                     />
                   </label>
                   <button
                     class="button button--secondary"
                     type="button"
-                    onClick={() => void useAutomaticPosition()}
+                    onClick={() => {
+                      const elementId = snapshot()?.selectedElementId;
+                      if (elementId) {
+                        void execute({
+                          type: "use-automatic-position",
+                          elementId,
+                        });
+                      }
+                    }}
+                    disabled={
+                      action("use-automatic-position").state !== "available"
+                    }
+                    title={actionTitle("use-automatic-position")}
                   >
                     Use automatic position
                   </button>
                   <button
                     class="button button--quiet-dark"
                     type="button"
-                    onClick={() => void cleanUnused()}
+                    onClick={() => void execute({ type: "cleanup-unmatched" })}
+                    disabled={action("cleanup-unmatched").state !== "available"}
+                    title={actionTitle("cleanup-unmatched")}
                   >
                     Clean up unused settings
                   </button>

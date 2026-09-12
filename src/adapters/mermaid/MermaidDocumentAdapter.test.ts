@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { CommandUnavailableError } from "../../core/document/DocumentEngine";
 import { MermaidDocumentAdapter } from "./MermaidDocumentAdapter";
 import { mermaidFamilyAdapters } from "./familyAdapters";
 
@@ -165,6 +166,135 @@ describe("MermaidDocumentAdapter baseline", () => {
     expect(snapshots.map(({ semanticModel }) => semanticModel?.family)).toEqual(
       ["flowchart", "swimlane", "c4-context", "c4-container"],
     );
+  });
+});
+
+describe("Mermaid presentation commands", () => {
+  it("resolves lane and endpoint-matched relationship identities inside the adapter", async () => {
+    const lane = new MermaidDocumentAdapter();
+    await lane.open(await fixture("swimlane-baseline.mmd"));
+    const styledLane = await lane.execute({
+      type: "set-appearance",
+      elementId: "sales",
+      appearance: { fill: "#ffffff", stroke: "#2563eb" },
+    });
+    expect(styledLane.snapshot.presentationModel?.metadata).toMatchObject({
+      elements: {
+        lanes: {
+          sales: {
+            style: { fill: "#ffffff", outline: { color: "#2563eb" } },
+          },
+        },
+      },
+    });
+    expect(styledLane.snapshot.commands.undo).toBe(true);
+    lane.dispose();
+
+    const relationship = new MermaidDocumentAdapter();
+    const source = `---
+manatee:
+  version: 1
+  elements:
+    relationships:
+      byEndpoints:
+        - match: { source: A, target: B, kind: arrow_point }
+          style: { color: "#111827" }
+        - match: { source: Missing, target: Gone, kind: arrow_point }
+          style: { color: "#dc2626" }
+---
+flowchart LR
+A --> B
+`;
+    const opened = await relationship.open(source);
+    const id = opened.semanticModel?.relationships[0]?.id;
+    expect(id).toBeDefined();
+    const styled = await relationship.execute({
+      type: "set-appearance",
+      elementId: id!,
+      appearance: { stroke: "#2563eb" },
+    });
+    const styledElements = styled.snapshot.presentationModel?.metadata
+      ?.elements as { relationships?: { byEndpoints?: unknown[] } } | undefined;
+    const entries = styledElements?.relationships?.byEndpoints ?? [];
+    expect(entries[0]).toMatchObject({ style: { color: "#2563eb" } });
+    const cleaned = await relationship.execute({ type: "cleanup-unmatched" });
+    const cleanedElements = cleaned.snapshot.presentationModel?.metadata
+      ?.elements as { relationships?: { byEndpoints?: unknown[] } } | undefined;
+    const cleanedEntries = cleanedElements?.relationships?.byEndpoints ?? [];
+    expect(cleanedEntries).toHaveLength(1);
+    expect(cleanedEntries[0]).toMatchObject({
+      match: { source: "A", target: "B", kind: "arrow_point" },
+    });
+    relationship.dispose();
+  });
+
+  it("converts nested canvas movement to a container-local manual position", async () => {
+    const adapter = new MermaidDocumentAdapter();
+    await adapter.open(`---
+manatee:
+  version: 1
+  elements:
+    groups:
+      container:
+        position: { x: 100, y: 80 }
+    nodes:
+      child:
+        position: { x: 12, y: 20 }
+---
+flowchart LR
+subgraph container[Container]
+child[Child]
+end
+`);
+    const moved = await adapter.execute({
+      type: "move",
+      elementId: "child",
+      dx: 10,
+      dy: 5,
+    });
+    expect(moved.snapshot.presentationModel?.metadata).toMatchObject({
+      elements: { nodes: { child: { position: { x: 22, y: 25 } } } },
+    });
+    adapter.dispose();
+  });
+
+  it("appends styling rules and rejects unavailable commands without history", async () => {
+    const adapter = new MermaidDocumentAdapter();
+    await adapter.open(`---
+manatee:
+  version: 1
+  rules:
+    - match: { id: A }
+      style: { fill: "#ffffff" }
+---
+flowchart LR
+A --> B
+`);
+    const created = await adapter.execute({
+      type: "create-styling-rule",
+      attribute: "status",
+      value: "failed",
+      appearance: { stroke: "#dc2626" },
+    });
+    expect(created.snapshot.presentationModel?.metadata?.rules).toHaveLength(2);
+
+    const readOnlySource = `---
+manatee:
+  version: 2
+---
+flowchart LR
+A --> B
+`;
+    const readOnly = await adapter.open(readOnlySource);
+    expect(readOnly.commands.presentation["set-spacing"]).toMatchObject({
+      state: "disabled",
+    });
+    await expect(
+      adapter.execute({ type: "set-spacing", spacing: "node", value: 64 }),
+    ).rejects.toBeInstanceOf(CommandUnavailableError);
+    expect(adapter.snapshot().source).toBe(readOnlySource);
+    expect(adapter.snapshot().commands.undo).toBe(false);
+    adapter.dispose();
   });
 });
 

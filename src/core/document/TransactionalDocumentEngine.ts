@@ -1,7 +1,7 @@
 import type {
   CommandResult,
-  DocumentCommand,
-  DocumentEngine,
+  TransactionCommand,
+  TransactionEngine,
 } from "./DocumentEngine";
 import type {
   DocumentHint,
@@ -36,7 +36,7 @@ export class TransactionalDocumentEngine<
   SemanticModel = unknown,
   PresentationModel = unknown,
   View = unknown,
-> implements DocumentEngine<
+> implements TransactionEngine<
   DocumentSnapshot<SemanticModel, PresentationModel, View>
 > {
   readonly #parser: DocumentParser<SemanticModel, PresentationModel, View>;
@@ -69,7 +69,7 @@ export class TransactionalDocumentEngine<
   }
 
   async execute(
-    command: DocumentCommand,
+    command: TransactionCommand,
   ): Promise<
     CommandResult<DocumentSnapshot<SemanticModel, PresentationModel, View>>
   > {
@@ -198,6 +198,18 @@ export class TransactionalDocumentEngine<
         imageExport: valid && (parsed.imageExport ?? true),
         undo: false,
         redo: false,
+        presentation: Object.freeze({
+          move: { state: "inapplicable" as const },
+          resize: { state: "inapplicable" as const },
+          route: { state: "inapplicable" as const },
+          "set-appearance": { state: "inapplicable" as const },
+          "set-attribute": { state: "inapplicable" as const },
+          "create-styling-rule": { state: "inapplicable" as const },
+          "set-spacing": { state: "inapplicable" as const },
+          "use-automatic-position": { state: "inapplicable" as const },
+          "reset-layout": { state: "inapplicable" as const },
+          "cleanup-unmatched": { state: "inapplicable" as const },
+        }),
       }),
     };
     return Object.freeze(snapshot);

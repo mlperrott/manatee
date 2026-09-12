@@ -27,6 +27,12 @@ The public command set covers source replacement, selection, move, resize, spaci
 
 Semantic models use stable authored IDs. Mermaid relationship overrides without IDs use the approved unique `{ source, target, kind }` matcher. BPMN uses standard element IDs and DI references. Adapters map their models into common selection, inspector, persistence, and export capabilities without forcing BPMN into Mermaid's scene model.
 
+### Document session lifetime
+
+A framework-neutral `DocumentSession` owns the active adapter and the ordering of document opens, commands, debounced source edits, presentation completion, autosave recovery, and persistence. Every asynchronous operation is tied to the adapter and document revision that started it, so a delayed result cannot replace a newer document. Commands are serialized with pending source edits, and autosaves are serialized so the newest accepted snapshot is stored last.
+
+The session depends on injected adapter factories, a document store, and an optional presenter callback. The Solid UI subscribes to immutable session state. IndexedDB remains a browser storage adapter, and DOM-dependent BPMN drawing remains in the BPMN surface.
+
 ### Source preservation
 
 For Mermaid documents, keep the original text and YAML CST. Untouched saves are byte-identical. Visual commands patch only the top-level `manatee` mapping; text outside it remains byte-identical, and unknown fields/comments inside it survive a rewrite.

@@ -25,7 +25,18 @@ export interface CommandAvailability {
   readonly imageExport: boolean;
   readonly undo: boolean;
   readonly redo: boolean;
+  readonly presentation: Readonly<
+    Record<
+      import("./DocumentEngine").PresentationCommandType,
+      PresentationCommandAvailability
+    >
+  >;
 }
+
+export type PresentationCommandAvailability =
+  | { readonly state: "available" }
+  | { readonly state: "disabled"; readonly reason: string }
+  | { readonly state: "inapplicable" };
 
 export interface DocumentSnapshot<
   SemanticModel = unknown,
@@ -39,6 +50,7 @@ export interface DocumentSnapshot<
   readonly view: View | undefined;
   readonly diagnostics: readonly DocumentDiagnostic[];
   readonly selectedElementId: string | undefined;
+  readonly selectedElementLabel?: string;
   readonly valid: boolean;
   readonly previewOutdated: boolean;
   readonly dirty: boolean;
