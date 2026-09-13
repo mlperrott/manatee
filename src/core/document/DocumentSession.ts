@@ -138,9 +138,10 @@ export class DocumentSession implements Disposable {
     requestInput: OpenDocumentRequest | Promise<OpenDocumentRequest>,
     loadingMessage?: string,
   ): Promise<void> {
+    const reusable = this.#active;
+    const pendingCommands = this.#commandTail;
     const revision = this.#beginOperation();
     this.#commandTail = Promise.resolve();
-    this.#active?.dispose();
     this.#active = undefined;
     const immediate = "filename" in requestInput ? requestInput : undefined;
     this.#update({
@@ -156,12 +157,18 @@ export class DocumentSession implements Disposable {
       }),
     });
 
-    let candidate: SessionDocument | undefined;
+    let candidate: SessionDocument | undefined = reusable;
     try {
-      const request = await Promise.resolve(requestInput);
-      if (!this.#isCurrent(revision)) return;
+      const [request] = await Promise.all([
+        Promise.resolve(requestInput),
+        pendingCommands,
+      ]);
+      if (!this.#isCurrent(revision)) {
+        candidate?.dispose();
+        return;
+      }
       const [active, source] = await Promise.all([
-        this.#createDocument(),
+        candidate ?? this.#createDocument(),
         Promise.resolve(request.source),
       ]);
       candidate = active;
@@ -169,13 +176,20 @@ export class DocumentSession implements Disposable {
         candidate.dispose();
         return;
       }
-      this.#active = candidate;
       this.#lastValidSource = request.previewSource;
       let snapshot = await candidate.open(request.previewSource ?? source);
-      if (!this.#owns(revision, candidate)) return;
+      if (!this.#isCurrent(revision)) {
+        candidate.dispose();
+        return;
+      }
       if (request.previewSource && request.previewSource !== source) {
         snapshot = await candidate.replaceSource(source);
       }
+      if (!this.#isCurrent(revision)) {
+        candidate.dispose();
+        return;
+      }
+      this.#active = candidate;
       await this.#accept(snapshot, request.filename, revision, candidate);
     } catch (error) {
       if (this.#isCurrent(revision)) {

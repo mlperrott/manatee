@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { CommandUnavailableError } from "../core/document/commands";
 import { MermaidDocument } from "./MermaidDocument";
+import { MermaidLayout } from "./layout/MermaidLayout";
 import { renderMermaidSvg } from "./render/svg";
 
 async function fixture(name: string): Promise<string> {
@@ -281,6 +282,39 @@ timeout --> escalate[Escalate]
 });
 
 describe("Mermaid presentation commands", () => {
+  it("moves an element without rerunning automatic layout", async () => {
+    class CountingLayout extends MermaidLayout {
+      calls = 0;
+
+      override async layout(request: Parameters<MermaidLayout["layout"]>[0]) {
+        this.calls += 1;
+        return await super.layout(request);
+      }
+    }
+
+    const layout = new CountingLayout(false);
+    const document = new MermaidDocument(layout);
+    const opened = await document.open("flowchart LR\nA --> B");
+    const before = opened.scene?.nodes.find(({ id }) => id === "A");
+
+    const moved = await document.execute({
+      type: "move",
+      elementId: "A",
+      dx: 10,
+      dy: 5,
+    });
+
+    expect(layout.calls).toBe(1);
+    expect(
+      moved.snapshot.scene?.nodes.find(({ id }) => id === "A"),
+    ).toMatchObject({
+      x: (before?.x ?? 0) + 10,
+      y: (before?.y ?? 0) + 5,
+      manual: true,
+    });
+    document.dispose();
+  });
+
   it("edits an explicit boundary timer atomically and preserves its fallback", async () => {
     const document = new MermaidDocument();
     await document.open(`flowchart LR
@@ -418,6 +452,7 @@ manatee:
     groups:
       container:
         position: { x: 100, y: 80 }
+        notation: { type: pool }
     nodes:
       child:
         position: { x: 12, y: 20 }

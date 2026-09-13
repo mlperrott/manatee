@@ -127,6 +127,23 @@ function documentFactory(documents: FakeDocument[]) {
 afterEach(() => vi.useRealTimers());
 
 describe("DocumentSession", () => {
+  it("reuses the Mermaid document across sequential opens", async () => {
+    const active = new FakeDocument();
+    const createDocument = vi.fn(() => active);
+    const session = new DocumentSession({
+      createDocument,
+      store: new MemoryStore(),
+    });
+
+    await session.open({ filename: "first.mmd", source: "first" });
+    await session.open({ filename: "second.mmd", source: "second" });
+
+    expect(createDocument).toHaveBeenCalledTimes(1);
+    expect(active.openCalls).toBe(2);
+    expect(active.disposed).toBe(false);
+    session.dispose();
+  });
+
   it("prevents a delayed document open from replacing a newer document", async () => {
     const firstOpen = deferred<MermaidDocumentSnapshot>();
     const first = new FakeDocument(() => firstOpen.promise);
@@ -274,9 +291,8 @@ describe("DocumentSession", () => {
       savedAt: 1,
     };
     const fallback = new FakeDocument();
-    const recovered = new FakeDocument();
     const session = new DocumentSession({
-      createDocument: documentFactory([fallback, recovered]),
+      createDocument: documentFactory([fallback]),
       store,
     });
     await session.initialize({
@@ -287,7 +303,7 @@ describe("DocumentSession", () => {
 
     await session.recoverAutosave();
 
-    expect(recovered.replacements).toEqual(["flowchart LR\nA["]);
+    expect(fallback.replacements).toEqual(["flowchart LR\nA["]);
     expect(session.state()).toMatchObject({
       filename: "recovered.mmd",
       source: "flowchart LR\nA[",
