@@ -1,5 +1,7 @@
 # BPMN compatibility and architecture input
 
+> Superseded by [ADR-0002](../adr/0002-mermaid-authored-bpmn-notation.md). This records why the earlier XML implementation was chosen and is not current product guidance.
+
 Research date: 2026-09-10. Sources are the OMG specification, Mermaid's official documentation and repository, and the bpmn.io projects and package metadata.
 
 ## Finding

@@ -1,0 +1,51 @@
+---
+manatee:
+  version: 1
+  elements:
+    nodes:
+      request: { notation: { type: start-event } }
+      submit: { notation: { type: task } }
+      review: { notation: { type: task } }
+      approved: { notation: { type: exclusive-gateway } }
+      fulfil: { notation: { type: collapsed-subprocess } }
+      wait: { notation: { type: timer-event } }
+      timeout:
+        notation:
+          type: boundary-timer
+          host: review
+          attachment: timeoutLink
+          anchor: { side: bottom, offset: 0.8 }
+      escalate: { notation: { type: task } }
+      split: { notation: { type: parallel-gateway } }
+      archive: { notation: { type: task } }
+      notify: { notation: { type: task } }
+      done: { notation: { type: end-event } }
+    groups:
+      customer: { notation: { type: pool } }
+      company: { notation: { type: pool } }
+      operations: { notation: { type: lane } }
+    relationships:
+      byId:
+        handoff: { notation: { type: message-flow } }
+        approvedFlow: { notation: { type: sequence-flow } }
+---
+flowchart LR
+  subgraph customer[Customer]
+    request([Request received]) --> submit[Submit request]
+  end
+  subgraph company[Company]
+    subgraph operations[Operations]
+      review[Review request] --> approved{Approved?}
+      approved approvedFlow@-->|Yes| fulfil[Fulfil request]
+      approved -->|No| wait([Wait for changes])
+      wait --> review
+      review timeoutLink@--> timeout([Review timeout])
+      timeout --> escalate[Escalate review]
+      fulfil --> split{Continue both}
+      split --> archive[Archive]
+      split --> notify[Notify customer]
+      archive --> done([Complete])
+      notify --> done
+    end
+  end
+  submit handoff@-->|Request| review

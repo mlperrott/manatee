@@ -24,15 +24,15 @@ test("renders the supported ceiling within the release budget", async ({
 }) => {
   await page.goto("./");
   const result = await page.evaluate(async (source) => {
-    const moduleUrl = "/src/adapters/mermaid/index.ts";
+    const moduleUrl = "/src/mermaid/index.ts";
     const api = await import(moduleUrl);
-    const adapter = new api.MermaidDocumentAdapter();
+    const document = new api.MermaidDocument();
     try {
-      await adapter.open("flowchart LR\n  warmup --> ready");
+      await document.open("flowchart LR\n  warmup --> ready");
       const started = performance.now();
-      const snapshot = await adapter.open(source);
-      const scene = snapshot.view?.scene;
-      if (!scene) throw new Error("Mermaid adapter did not produce a scene.");
+      const snapshot = await document.open(source);
+      const scene = snapshot.scene;
+      if (!scene) throw new Error("Mermaid document did not produce a scene.");
       api.renderMermaidSvg(scene);
       return {
         valid: snapshot.valid,
@@ -42,7 +42,7 @@ test("renders the supported ceiling within the release budget", async ({
         elapsed: performance.now() - started,
       };
     } finally {
-      adapter.dispose();
+      document.dispose();
     }
   }, releaseDiagram());
 
@@ -55,13 +55,14 @@ test("renders the supported ceiling within the release budget", async ({
   expect(result.elapsed).toBeLessThan(2_000);
 });
 
-test("loads the BPMN editor separately within the render budget", async ({
+test("renders the enriched process starter within the render budget", async ({
   page,
 }) => {
   await page.goto("./");
   const started = await page.evaluate(() => performance.now());
-  await page.getByRole("button", { name: "BPMN example" }).click();
-  await expect(page.locator(".bpmn-surface .djs-container")).toBeVisible();
+  await page.getByRole("button", { name: "Process example" }).click();
+  await expect(page.locator('[data-notation="boundary-timer"]')).toBeVisible();
+  await expect(page.locator('[data-notation="message-flow"]')).toBeVisible();
   const elapsed = await page.evaluate(
     (before) => performance.now() - before,
     started,

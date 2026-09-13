@@ -51,24 +51,36 @@ test("edits a Mermaid document through source, keyboard, and inspector", async (
   expect(runtimeErrors).toEqual([]);
 });
 
-test("switches to the lazy BPMN editor and selects a process element", async ({
+test("changes process notation through the Mermaid inspector", async ({
   page,
 }) => {
   await page.goto("./");
-  await page.getByRole("button", { name: "BPMN example" }).click();
-
-  await expect(page.locator(".bpmn-surface .djs-container")).toBeVisible({
-    timeout: 10_000,
-  });
-  await page.locator('[data-element-id="Task_Review"]').click();
+  await page.locator('[data-element-id="review"]').click();
   await expect(
     page
       .getByRole("complementary", { name: "Inspector" })
       .getByText("Review request", { exact: true }),
   ).toBeVisible();
+  await page
+    .getByLabel("Process notation")
+    .selectOption("collapsed-subprocess");
   await expect(
-    page.getByRole("button", { name: "Apply appearance" }),
-  ).toBeEnabled();
+    page.locator(
+      '[data-element-id="review"][data-notation="collapsed-subprocess"]',
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Show source" }).click();
+  await expect(page.getByLabel("Diagram source")).toHaveValue(
+    /review:[\s\S]*type: collapsed-subprocess/u,
+  );
+  await page.getByRole("button", { name: "Hide source" }).click();
+  await page.locator('[data-element-id="timeout"]').click();
+  await expect(page.getByLabel("Process notation")).toHaveValue(
+    "boundary-timer",
+  );
+  await expect(page.getByLabel("Timeout attachment")).toHaveValue(
+    "timeoutLink",
+  );
 });
 
 test("opens and downloads a portable source document", async ({ page }) => {
@@ -119,6 +131,113 @@ test("recovers invalid autosave with its last valid preview", async ({
   ).toHaveValue("flowchart LR\n  alpha[");
   await expect(page.locator('svg[data-outdated="true"]')).toBeVisible();
   await expect(page.getByText("Recovered", { exact: true })).toBeVisible();
+});
+
+test("retires a legacy BPMN autosave before opening Mermaid", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const database = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("manatee-studio", 1);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const active = await new Promise<unknown>((resolve, reject) => {
+          const request = database
+            .transaction("documents", "readonly")
+            .objectStore("documents")
+            .get("active");
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        database.close();
+        return (active as { schemaVersion?: unknown } | undefined)
+          ?.schemaVersion;
+      }),
+    )
+    .toBe(2);
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("manatee-studio", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("documents", "readwrite");
+      transaction.objectStore("documents").put(
+        {
+          filename: "retired-process.bpmn",
+          kind: "bpmn",
+          source: "<definitions><process /></definitions>",
+          savedAt: Date.now(),
+        },
+        "active",
+      );
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  });
+
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "Autosave recovery" }),
+  ).not.toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Retired source recovery" }),
+  ).toBeVisible();
+  await expect(page.locator("svg[data-manatee-renderer]")).toHaveAttribute(
+    "data-manatee-renderer",
+    "mermaid",
+  );
+  const stored = await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("manatee-studio", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const values = await new Promise<{ active: unknown; retired: unknown }>(
+      (resolve, reject) => {
+        const store = database
+          .transaction("documents", "readonly")
+          .objectStore("documents");
+        const active = store.get("active");
+        const retired = store.get("retired-bpmn");
+        retired.onsuccess = () =>
+          resolve({ active: active.result, retired: retired.result });
+        retired.onerror = () => reject(retired.error);
+      },
+    );
+    database.close();
+    return values;
+  });
+  expect(stored.active).toMatchObject({
+    filename: "request-flow.mmd",
+    schemaVersion: 2,
+  });
+  expect(stored.active).not.toHaveProperty("kind");
+  expect(stored.retired).toMatchObject({
+    filename: "retired-process.bpmn",
+    kind: "bpmn",
+  });
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download source" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("retired-process.bpmn");
+  const path = await download.path();
+  expect(await readFile(path!, "utf8")).toBe(
+    "<definitions><process /></definitions>",
+  );
+  await page
+    .getByRole("region", { name: "Retired source recovery" })
+    .getByRole("button", { name: "Discard" })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Retired source recovery" }),
+  ).not.toBeVisible();
 });
 
 test("exports scaled PNG and falls back to download when clipboard fails", async ({

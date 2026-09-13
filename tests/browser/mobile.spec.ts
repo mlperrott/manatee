@@ -140,7 +140,7 @@ test("keeps source reachable in a short viewport and preserves it across rotatio
   await noPageOverflow(page);
 });
 
-test("opens portable files and reaches BPMN selection and export", async ({
+test("opens portable files and reaches process notation and export", async ({
   page,
 }) => {
   await page.goto("./");
@@ -159,14 +159,17 @@ test("opens portable files and reaches BPMN selection and export", async ({
   await expect(page.getByText("Portable document downloaded.")).toBeVisible();
   await page.getByRole("button", { name: "Dismiss notification" }).tap();
   await page.getByText("Examples", { exact: true }).tap();
-  await page.getByRole("button", { name: "BPMN example" }).tap();
-  await expect(page.locator(".bpmn-surface .djs-container")).toBeVisible();
+  await page.getByRole("button", { name: "Process example" }).tap();
+  await expect(
+    page.locator('[data-notation="exclusive-gateway"]'),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Fit diagram to screen" }).tap();
-  await page.locator('[data-element-id="Task_Review"]').tap();
+  await page.locator('[data-element-id="review"]').tap();
   await view(page, "Inspector");
-  await expect(page.locator(".selection-summary code")).toHaveText(
-    "Task_Review",
-  );
+  await expect(page.locator(".selection-summary code")).toHaveText("review");
+  await page
+    .getByLabel("Process notation")
+    .selectOption("collapsed-subprocess");
   await page.getByLabel("Fill colour").fill("#ffccaa");
   await page.getByRole("button", { name: "Apply appearance" }).tap();
   await view(page, "Source");
@@ -176,7 +179,7 @@ test("opens portable files and reaches BPMN selection and export", async ({
   await page.getByText("Export", { exact: true }).tap();
   const exportPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download SVG" }).tap();
-  expect((await exportPromise).suggestedFilename()).toBe("review-process.svg");
+  expect((await exportPromise).suggestedFilename()).toBe("request-flow.svg");
 });
 
 test("cancelled touch drags never move an element", async ({ page }) => {

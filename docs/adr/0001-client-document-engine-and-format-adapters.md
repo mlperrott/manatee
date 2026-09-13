@@ -1,6 +1,6 @@
 # ADR-0001: Use a client document engine with format adapters
 
-- Status: Accepted
+- Status: Partially superseded by [ADR-0002](0002-mermaid-authored-bpmn-notation.md) for BPMN scope, format adapters, generic document contracts, and dual-format session/presentation orchestration. The XML and dual-format designs below record the previous direction.
 - Date: 2026-09-10
 - Decision owners: Manatee maintainers
 

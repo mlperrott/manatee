@@ -1,9 +1,9 @@
-import type { DocumentCommand, DocumentEngine } from "./DocumentEngine";
-import type { DocumentHint, DocumentKind, DocumentSnapshot } from "./types";
+import type { MermaidDocumentSnapshot } from "../../mermaid/MermaidDocument";
+import type { DocumentCommand } from "./commands";
 
 export interface SavedDocument {
+  readonly schemaVersion: 2;
   readonly filename: string;
-  readonly kind: DocumentKind;
   readonly source: string;
   readonly lastValidSource?: string;
   readonly savedAt: number;
@@ -15,25 +15,19 @@ export interface DocumentStore {
   clear(): Promise<void>;
 }
 
-export interface SessionDocumentAdapter extends DocumentEngine<DocumentSnapshot> {
-  readonly kind: DocumentKind;
+export interface SessionDocument {
+  open(source: string): Promise<MermaidDocumentSnapshot>;
+  execute(
+    command: DocumentCommand,
+  ): Promise<{ snapshot: MermaidDocumentSnapshot }>;
+  replaceSource(source: string): Promise<MermaidDocumentSnapshot>;
   dispose(): void;
 }
 
-export interface DocumentAdapterRegistration {
-  create(): SessionDocumentAdapter | Promise<SessionDocumentAdapter>;
-  prepare?(
-    adapter: SessionDocumentAdapter,
-    snapshot: DocumentSnapshot,
-  ): DocumentSnapshot | Promise<DocumentSnapshot>;
-}
-
 export interface OpenDocumentRequest {
-  readonly kind: DocumentKind;
   readonly filename: string;
   readonly source: string | Promise<string>;
   readonly previewSource?: string;
-  readonly hint?: DocumentHint;
 }
 
 export type DocumentSessionStatus =
@@ -44,20 +38,17 @@ export type DocumentSessionStatus =
 export interface DocumentSessionState {
   readonly filename: string;
   readonly source: string;
-  readonly snapshot: DocumentSnapshot | undefined;
+  readonly snapshot: MermaidDocumentSnapshot | undefined;
   readonly recovery: SavedDocument | undefined;
   readonly status: DocumentSessionStatus;
 }
 
 export interface DocumentSessionOptions {
-  readonly adapters: Readonly<
-    Record<DocumentKind, DocumentAdapterRegistration>
-  >;
+  readonly createDocument: () => SessionDocument | Promise<SessionDocument>;
   readonly store: DocumentStore;
   readonly initialFilename?: string;
   readonly initialSource?: string;
   readonly sourceEditDelayMs?: number;
-  readonly present?: (snapshot: DocumentSnapshot) => void | Promise<void>;
   readonly now?: () => number;
   readonly schedule?: (callback: () => void, delayMs: number) => () => void;
 }
@@ -67,7 +58,7 @@ type StateListener = (state: DocumentSessionState) => void;
 interface PendingSourceEdit {
   readonly source: string;
   readonly revision: number;
-  readonly adapter: SessionDocumentAdapter;
+  readonly active: SessionDocument;
 }
 
 const defaultSchedule = (callback: () => void, delayMs: number) => {
@@ -80,15 +71,14 @@ function errorMessage(error: unknown): string {
 }
 
 export class DocumentSession implements Disposable {
-  readonly #adapters: DocumentSessionOptions["adapters"];
+  readonly #createDocument: DocumentSessionOptions["createDocument"];
   readonly #store: DocumentStore;
   readonly #sourceEditDelayMs: number;
-  readonly #present: (snapshot: DocumentSnapshot) => void | Promise<void>;
   readonly #now: () => number;
   readonly #schedule: NonNullable<DocumentSessionOptions["schedule"]>;
   readonly #listeners = new Set<StateListener>();
   #state: DocumentSessionState;
-  #adapter: SessionDocumentAdapter | undefined;
+  #active: SessionDocument | undefined;
   #fallback: OpenDocumentRequest | undefined;
   #lastValidSource: string | undefined;
   #revision = 0;
@@ -101,10 +91,9 @@ export class DocumentSession implements Disposable {
   #disposed = false;
 
   constructor(options: DocumentSessionOptions) {
-    this.#adapters = options.adapters;
+    this.#createDocument = options.createDocument;
     this.#store = options.store;
     this.#sourceEditDelayMs = options.sourceEditDelayMs ?? 180;
-    this.#present = options.present ?? (() => undefined);
     this.#now = options.now ?? Date.now;
     this.#schedule = options.schedule ?? defaultSchedule;
     this.#state = Object.freeze({
@@ -151,9 +140,9 @@ export class DocumentSession implements Disposable {
   ): Promise<void> {
     const revision = this.#beginOperation();
     this.#commandTail = Promise.resolve();
-    this.#adapter?.dispose();
-    this.#adapter = undefined;
-    const immediate = "kind" in requestInput ? requestInput : undefined;
+    this.#active?.dispose();
+    this.#active = undefined;
+    const immediate = "filename" in requestInput ? requestInput : undefined;
     this.#update({
       ...(typeof immediate?.source === "string"
         ? { source: immediate.source }
@@ -167,43 +156,33 @@ export class DocumentSession implements Disposable {
       }),
     });
 
-    let candidate: SessionDocumentAdapter | undefined;
+    let candidate: SessionDocument | undefined;
     try {
       const request = await Promise.resolve(requestInput);
       if (!this.#isCurrent(revision)) return;
-      const [adapter, source] = await Promise.all([
-        this.#adapters[request.kind].create(),
+      const [active, source] = await Promise.all([
+        this.#createDocument(),
         Promise.resolve(request.source),
       ]);
-      candidate = adapter;
+      candidate = active;
       if (!this.#isCurrent(revision)) {
         candidate.dispose();
         return;
       }
-      this.#adapter = candidate;
+      this.#active = candidate;
       this.#lastValidSource = request.previewSource;
-      const hint = request.hint ?? {
-        kind: request.kind,
-        filename: request.filename,
-      };
-      let snapshot = await candidate.open(
-        request.previewSource ?? source,
-        hint,
-      );
+      let snapshot = await candidate.open(request.previewSource ?? source);
       if (!this.#owns(revision, candidate)) return;
       if (request.previewSource && request.previewSource !== source) {
         snapshot = await candidate.replaceSource(source);
-      } else {
-        const prepare = this.#adapters[request.kind].prepare;
-        if (prepare) snapshot = await prepare(candidate, snapshot);
       }
       await this.#accept(snapshot, request.filename, revision, candidate);
     } catch (error) {
       if (this.#isCurrent(revision)) {
         candidate?.dispose();
-        if (this.#adapter === candidate) this.#adapter = undefined;
+        if (this.#active === candidate) this.#active = undefined;
         this.reportError(error);
-      } else if (candidate && this.#adapter !== candidate) {
+      } else if (candidate && this.#active !== candidate) {
         candidate.dispose();
       }
     }
@@ -212,30 +191,30 @@ export class DocumentSession implements Disposable {
   execute(command: DocumentCommand): Promise<void> {
     this.#flushPendingSourceEdit();
     const revision = this.#revision;
-    const adapter = this.#adapter;
-    if (!adapter) return Promise.resolve();
+    const active = this.#active;
+    if (!active) return Promise.resolve();
     return this.#enqueue(async () => {
-      if (!this.#owns(revision, adapter)) return;
+      if (!this.#owns(revision, active)) return;
       try {
-        const result = await adapter.execute(command);
+        const result = await active.execute(command);
         await this.#accept(
           result.snapshot,
           this.#state.filename,
           revision,
-          adapter,
+          active,
         );
       } catch (error) {
-        if (this.#owns(revision, adapter)) this.reportError(error);
+        if (this.#owns(revision, active)) this.reportError(error);
       }
     });
   }
 
   editSource(source: string): void {
-    const adapter = this.#adapter;
-    if (!adapter) return;
+    const active = this.#active;
+    if (!active) return;
     const revision = this.#beginOperation();
     this.#update({ source });
-    const edit = { source, revision, adapter };
+    const edit = { source, revision, active };
     this.#pendingSourceEdit = edit;
     this.#cancelSourceEdit = this.#schedule(() => {
       this.#cancelSourceEdit = undefined;
@@ -250,7 +229,6 @@ export class DocumentSession implements Disposable {
     this.#persistenceReady = true;
     this.#update({ recovery: undefined });
     await this.open({
-      kind: saved.kind,
       filename: saved.filename,
       source: saved.source,
       ...(saved.lastValidSource
@@ -264,8 +242,8 @@ export class DocumentSession implements Disposable {
     if (!fallback) return;
     const revision = this.#beginOperation();
     this.#commandTail = Promise.resolve();
-    this.#adapter?.dispose();
-    this.#adapter = undefined;
+    this.#active?.dispose();
+    this.#active = undefined;
     this.#update({
       snapshot: undefined,
       status: Object.freeze({
@@ -300,8 +278,8 @@ export class DocumentSession implements Disposable {
     this.#disposed = true;
     this.#revision += 1;
     this.#cancelPendingSourceEdit();
-    this.#adapter?.dispose();
-    this.#adapter = undefined;
+    this.#active?.dispose();
+    this.#active = undefined;
     this.#listeners.clear();
     this.#pendingSave = undefined;
   }
@@ -328,17 +306,17 @@ export class DocumentSession implements Disposable {
   }
 
   async #applySourceEdit(edit: PendingSourceEdit): Promise<void> {
-    if (!this.#owns(edit.revision, edit.adapter)) return;
+    if (!this.#owns(edit.revision, edit.active)) return;
     try {
-      const snapshot = await edit.adapter.replaceSource(edit.source);
+      const snapshot = await edit.active.replaceSource(edit.source);
       await this.#accept(
         snapshot,
         this.#state.filename,
         edit.revision,
-        edit.adapter,
+        edit.active,
       );
     } catch (error) {
-      if (this.#owns(edit.revision, edit.adapter)) this.reportError(error);
+      if (this.#owns(edit.revision, edit.active)) this.reportError(error);
     }
   }
 
@@ -346,31 +324,25 @@ export class DocumentSession implements Disposable {
     return !this.#disposed && revision === this.#revision;
   }
 
-  #owns(revision: number, adapter: SessionDocumentAdapter): boolean {
-    return this.#isCurrent(revision) && adapter === this.#adapter;
+  #owns(revision: number, active: SessionDocument): boolean {
+    return this.#isCurrent(revision) && active === this.#active;
   }
 
   async #accept(
-    snapshot: DocumentSnapshot,
+    snapshot: MermaidDocumentSnapshot,
     filename: string,
     revision: number,
-    adapter: SessionDocumentAdapter,
+    active: SessionDocument,
   ): Promise<void> {
-    if (!this.#owns(revision, adapter)) return;
+    if (!this.#owns(revision, active)) return;
     if (snapshot.valid) this.#lastValidSource = snapshot.source;
     this.#update({ filename, source: snapshot.source, snapshot });
-    try {
-      await this.#present(snapshot);
-    } catch (error) {
-      if (this.#owns(revision, adapter)) this.reportError(error);
-      return;
-    }
-    if (!this.#owns(revision, adapter)) return;
+    if (!this.#owns(revision, active)) return;
     this.#update({ status: Object.freeze({ kind: "ready" }) });
     if (this.#persistenceReady) {
       this.#scheduleSave({
         filename,
-        kind: snapshot.kind,
+        schemaVersion: 2,
         source: snapshot.source,
         ...(this.#lastValidSource
           ? { lastValidSource: this.#lastValidSource }
@@ -396,7 +368,7 @@ export class DocumentSession implements Disposable {
     if (!snapshot || this.#state.status.kind !== "ready") return;
     this.#scheduleSave({
       filename: this.#state.filename,
-      kind: snapshot.kind,
+      schemaVersion: 2,
       source: snapshot.source,
       ...(this.#lastValidSource
         ? { lastValidSource: this.#lastValidSource }

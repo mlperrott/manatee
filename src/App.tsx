@@ -1,30 +1,21 @@
-import {
-  createMemo,
-  createSignal,
-  lazy,
-  Loading,
-  onSettled,
-  Show,
-} from "solid-js";
+import { createMemo, createSignal, onSettled, Show } from "solid-js";
 import { createStore } from "solid-js";
 
-import type { BpmnCanvas } from "./adapters/bpmn/BpmnCanvas";
-import type {
-  BpmnDocumentAdapter,
-  BpmnDocumentSnapshot,
-} from "./adapters/bpmn/BpmnDocumentAdapter";
 import {
-  MermaidDocumentAdapter,
+  boundaryTimerNotation,
+  MermaidDocument,
   renderMermaidSvg,
   type MermaidDocumentSnapshot,
-} from "./adapters/mermaid";
+} from "./mermaid";
+import processExample from "./mermaid/fixtures/process-notation.mmd?raw";
 import { initialEditorUiState, sourceToggleLabel } from "./app/editorUiState";
 import { MermaidSurface } from "./app/MermaidSurface";
 import { StatusNotice } from "./app/StatusNotice";
 import type {
   DocumentCommand,
+  NotationChoice,
   PresentationCommandType,
-} from "./core/document/DocumentEngine";
+} from "./core/document/commands";
 import { DocumentSession } from "./core/document/DocumentSession";
 import {
   copyPngOrDownload,
@@ -33,25 +24,83 @@ import {
   rasterizeSvg,
 } from "./export/DiagramExporter";
 import { IndexedDbDocumentRepository } from "./persistence/DocumentRepository";
+import type { RetiredSource } from "./persistence/DocumentRepository";
 import "./app.css";
 
-const BpmnSurface = lazy(async () => {
-  const module = await import("./adapters/bpmn/BpmnSurface");
-  return { default: module.BpmnSurface };
-});
-
-const mermaidExample = `flowchart LR
-  request[Request received] --> review{Approved?}
-  review -->|Yes| fulfil[Fulfil request]
-  review -->|No| revise[Request changes]
-  revise --> review
-  fulfil --> done([Complete])
-`;
-
-type ActiveSnapshot = MermaidDocumentSnapshot | BpmnDocumentSnapshot;
-
-function selectedLabel(current: ActiveSnapshot | undefined): string {
+function selectedLabel(current: MermaidDocumentSnapshot | undefined): string {
   return current?.selectedElementLabel ?? "No selection";
+}
+
+const nodeNotations: readonly [NotationChoice, string][] = [
+  ["task", "Task"],
+  ["start-event", "Start event"],
+  ["end-event", "End event"],
+  ["exclusive-gateway", "Exclusive gateway"],
+  ["parallel-gateway", "Parallel gateway"],
+  ["timer-event", "Timer wait"],
+  ["boundary-timer", "Interrupting timeout"],
+  ["collapsed-subprocess", "Collapsed subprocess"],
+];
+
+function selectedNotation(current: MermaidDocumentSnapshot | undefined) {
+  const id = current?.selectedElementId;
+  const scene = current?.scene;
+  if (!id || !scene) return undefined;
+  return (
+    scene.nodes.find((item) => item.id === id)?.notation ??
+    scene.groups.find((item) => item.id === id)?.notation ??
+    scene.relationships.find((item) => item.id === id)?.notation
+  );
+}
+
+function notationOptions(
+  current: MermaidDocumentSnapshot | undefined,
+): readonly [NotationChoice, string][] {
+  const id = current?.selectedElementId;
+  const model = current?.model;
+  if (
+    !id ||
+    !model ||
+    (model.family !== "flowchart" && model.family !== "swimlane")
+  ) {
+    return [];
+  }
+  if (model.nodes.some((item) => item.id === id)) return nodeNotations;
+  const group = model.groups.find((item) => item.id === id);
+  if (group)
+    return group.kind === "lane"
+      ? [["lane", "Lane"]]
+      : [
+          ["pool", "Pool"],
+          ["lane", "Lane"],
+        ];
+  return model.relationships.some((item) => item.id === id)
+    ? [
+        ["sequence-flow", "Sequence flow"],
+        ["message-flow", "Message flow"],
+      ]
+    : [];
+}
+
+function boundaryAttachmentOptions(
+  current: MermaidDocumentSnapshot | undefined,
+) {
+  const timerId = current?.selectedElementId;
+  if (!timerId || !current?.model) return [];
+  return current.model.relationships.flatMap((relationship) =>
+    relationship.target === timerId &&
+    relationship.source !== timerId &&
+    relationship.identity.kind === "authored" &&
+    current.model?.nodes.some(({ id }) => id === relationship.source)
+      ? [
+          {
+            id: relationship.identity.id,
+            hostId: relationship.source,
+            label: `${relationship.source} via ${relationship.identity.id}`,
+          },
+        ]
+      : [],
+  );
 }
 
 export default function App() {
@@ -60,8 +109,8 @@ export default function App() {
   const exampleSource =
     typeof window !== "undefined" &&
     Math.min(window.innerWidth, window.screen.width) <= 600
-      ? mermaidExample.replace("flowchart LR", "flowchart TD")
-      : mermaidExample;
+      ? processExample.replace("flowchart LR", "flowchart TD")
+      : processExample;
   const [ui, setUi] = createStore(initialEditorUiState());
   const [zoom, setZoom] = createSignal(1);
   const [fitView, setFitView] = createSignal(true);
@@ -70,62 +119,54 @@ export default function App() {
   const [stroke, setStroke] = createSignal("#2d817c");
   const [attributeName, setAttributeName] = createSignal("owner");
   const [attributeValue, setAttributeValue] = createSignal("operations");
+  const [boundaryAttachmentDraft, setBoundaryAttachmentDraft] =
+    createSignal("");
   const [pngScale, setPngScale] = createSignal(2);
   const [pngBackground, setPngBackground] = createSignal<
     "#ffffff" | "transparent"
   >("#ffffff");
   const [exportMessage, setExportMessage] = createSignal("");
+  const [retiredSource, setRetiredSource] = createSignal<RetiredSource>();
   const repository = new IndexedDbDocumentRepository();
-  let bpmnCanvas: BpmnCanvas | undefined;
   let stage: HTMLElement | undefined;
   let fileInput: HTMLInputElement | undefined;
   let fileHandle: FileSystemFileHandle | undefined;
 
   const documentSession = new DocumentSession({
-    adapters: {
-      mermaid: { create: () => new MermaidDocumentAdapter() },
-      bpmn: {
-        create: async () => {
-          const { BpmnDocumentAdapter } =
-            await import("./adapters/bpmn/BpmnDocumentAdapter");
-          return new BpmnDocumentAdapter();
-        },
-        prepare: async (adapter) =>
-          await (adapter as unknown as BpmnDocumentAdapter).recoverMissingDi(),
-      },
-    },
+    createDocument: () => new MermaidDocument(),
     store: repository,
     initialFilename: "request-flow.mmd",
     initialSource: exampleSource,
-    present: async (next) => {
-      if (
-        next.kind === "bpmn" &&
-        next.valid &&
-        bpmnCanvas?.source() !== next.source
-      ) {
-        const bpmn = next as BpmnDocumentSnapshot;
-        await bpmnCanvas?.importSource(next.source, bpmn.presentationModel);
-      }
-    },
   });
   const [documentState, setDocumentState] = createSignal(
     documentSession.state(),
   );
   const unsubscribeDocument = documentSession.subscribe(setDocumentState);
-  const snapshot = createMemo(
-    () => documentState().snapshot as ActiveSnapshot | undefined,
-  );
+  const snapshot = createMemo(() => documentState().snapshot);
   const source = createMemo(() => documentState().source);
   const filename = createMemo(() => documentState().filename);
   const recovery = createMemo(() => documentState().recovery);
+  const boundaryAttachments = createMemo(() =>
+    boundaryAttachmentOptions(snapshot()),
+  );
+  const currentBoundaryTimer = createMemo(() => {
+    const current = snapshot();
+    const id = current?.selectedElementId;
+    return id ? boundaryTimerNotation(current?.metadata, id) : undefined;
+  });
+  const boundaryAttachment = createMemo(() => {
+    const options = boundaryAttachments();
+    const draft = boundaryAttachmentDraft();
+    if (options.some(({ id }) => id === draft)) return draft;
+    const saved = currentBoundaryTimer()?.attachment;
+    if (saved && options.some(({ id }) => id === saved)) return saved;
+    return options[0]?.id ?? "";
+  });
 
   const svg = createMemo(() => {
     const current = snapshot();
-    const currentScene =
-      current?.kind === "mermaid"
-        ? (current as MermaidDocumentSnapshot).view?.scene
-        : undefined;
-    return current?.kind === "mermaid" && currentScene
+    const currentScene = current?.scene;
+    return currentScene
       ? renderMermaidSvg(currentScene, {
           ...(current.selectedElementId
             ? { selectedElementId: current.selectedElementId }
@@ -153,52 +194,29 @@ export default function App() {
     action(type).state !== "inapplicable";
 
   const openMermaid = async () => {
-    bpmnCanvas = undefined;
     setZoom(1);
     setFitView(true);
     setMobileView("canvas");
     fileHandle = undefined;
     await documentSession.open({
-      kind: "mermaid",
       filename: "request-flow.mmd",
       source: exampleSource,
     });
   };
 
-  const openBpmn = async () => {
-    bpmnCanvas = undefined;
-    setZoom(1);
-    setFitView(true);
-    setMobileView("canvas");
-    fileHandle = undefined;
-    await documentSession.open(
-      {
-        kind: "bpmn",
-        filename: "review-process.bpmn",
-        source:
-          import("./adapters/bpmn/fixtures/process-missing-di.bpmn?raw").then(
-            (fixture) => fixture.default,
-          ),
-      },
-      "Opening BPMN example…",
-    );
-  };
-
   const openFile = async (file: File) => {
-    bpmnCanvas = undefined;
     setZoom(1);
     setFitView(true);
     setMobileView("canvas");
     await documentSession.open(
-      file.text().then((documentSource) => ({
-        kind:
-          file.name.toLowerCase().endsWith(".bpmn") ||
-          /<(?:\w+:)?definitions\b/u.test(documentSource)
-            ? ("bpmn" as const)
-            : ("mermaid" as const),
-        filename: file.name,
-        source: documentSource,
-      })),
+      file.text().then((documentSource) => {
+        if (/^\s*<\?xml|<(?:\w+:)?definitions\b/u.test(documentSource)) {
+          throw new Error(
+            "BPMN XML is no longer supported. Open a Mermaid document instead.",
+          );
+        }
+        return { filename: file.name, source: documentSource };
+      }),
       `Opening ${file.name}…`,
     );
   };
@@ -220,10 +238,9 @@ export default function App() {
         multiple: false,
         types: [
           {
-            description: "Mermaid or BPMN diagram",
+            description: "Mermaid diagram",
             accept: {
               "text/plain": [".mmd", ".mermaid"],
-              "application/xml": [".bpmn"],
             },
           },
         ],
@@ -247,11 +264,10 @@ export default function App() {
         await writable.close();
         setExportMessage("Document saved to its original file.");
       } else {
-        const type =
-          current.kind === "bpmn"
-            ? "application/xml;charset=utf-8"
-            : "text/plain;charset=utf-8";
-        downloadBlob(new Blob([source()], { type }), filename());
+        downloadBlob(
+          new Blob([source()], { type: "text/plain;charset=utf-8" }),
+          filename(),
+        );
         setExportMessage("Portable document downloaded.");
       }
     } catch (error) {
@@ -269,10 +285,6 @@ export default function App() {
     const current = snapshot();
     if (!imageExportReady() || !current || current.previewOutdated) {
       throw new Error("Fix source errors before exporting this diagram.");
-    }
-    if (current.kind === "bpmn") {
-      if (!bpmnCanvas) throw new Error("The BPMN canvas is still loading.");
-      return await bpmnCanvas.exportSvg();
     }
     return svg();
   };
@@ -332,11 +344,13 @@ export default function App() {
   };
 
   onSettled(() => {
-    void documentSession.initialize({
-      kind: "mermaid",
-      filename: "request-flow.mmd",
-      source: exampleSource,
-    });
+    void documentSession
+      .initialize({
+        filename: "request-flow.mmd",
+        source: exampleSource,
+      })
+      .then(async () => setRetiredSource(await repository.loadRetiredSource()))
+      .catch(fail);
     if (!stage) return;
     const measure = () =>
       setUi((draft) => {
@@ -417,7 +431,7 @@ export default function App() {
           <input
             class="file-input"
             type="file"
-            accept=".mmd,.mermaid,.bpmn,.xml,text/plain,application/xml"
+            accept=".mmd,.mermaid,text/plain"
             aria-label="Choose diagram file"
             tabindex={-1}
             ref={(element) => {
@@ -444,14 +458,7 @@ export default function App() {
             type="button"
             onClick={() => void openMermaid()}
           >
-            Mermaid example
-          </button>
-          <button
-            class="button button--quiet desktop-only"
-            type="button"
-            onClick={() => void openBpmn()}
-          >
-            BPMN example
+            Process example
           </button>
           <button
             class="button button--quiet"
@@ -522,10 +529,7 @@ export default function App() {
               }}
             >
               <button type="button" onClick={() => void openMermaid()}>
-                Mermaid example
-              </button>
-              <button type="button" onClick={() => void openBpmn()}>
-                BPMN example
+                Process example
               </button>
             </div>
           </details>
@@ -557,6 +561,41 @@ export default function App() {
         </div>
       </Show>
       <StatusNotice status={documentState().status} />
+      <Show when={retiredSource()}>
+        {(readRetired) => (
+          <section class="recovery-banner" aria-label="Retired source recovery">
+            <span>
+              <strong>Previous BPMN source preserved</strong>
+              {readRetired().filename} can be downloaded before it is removed
+              from this browser.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                downloadBlob(
+                  new Blob([readRetired().source], {
+                    type: "application/xml;charset=utf-8",
+                  }),
+                  readRetired().filename,
+                );
+              }}
+            >
+              Download source
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void repository
+                  .discardRetiredSource()
+                  .then(() => setRetiredSource(undefined))
+                  .catch(fail);
+              }}
+            >
+              Discard
+            </button>
+          </section>
+        )}
+      </Show>
       <Show when={recovery()}>
         {(readSaved) => (
           <section class="recovery-banner" aria-label="Autosave recovery">
@@ -603,7 +642,7 @@ export default function App() {
                 <span class="eyebrow">Source</span>
                 <strong>Diagram text</strong>
               </span>
-              <span class="file-badge">{snapshot()?.kind?.toUpperCase()}</span>
+              <span class="file-badge">MERMAID</span>
             </div>
             <textarea
               aria-label="Diagram source"
@@ -702,7 +741,6 @@ export default function App() {
                   const next = Math.max(0.1, zoom() - 0.1);
                   setFitView(false);
                   setZoom(next);
-                  bpmnCanvas?.setZoom(next);
                 }}
               >
                 −
@@ -715,7 +753,6 @@ export default function App() {
                   const next = Math.min(2, zoom() + 0.1);
                   setFitView(false);
                   setZoom(next);
-                  bpmnCanvas?.setZoom(next);
                 }}
               >
                 +
@@ -725,7 +762,6 @@ export default function App() {
                 aria-label="Fit diagram to screen"
                 onClick={() => {
                   setFitView(true);
-                  if (bpmnCanvas) setZoom(bpmnCanvas.fitViewport());
                 }}
               >
                 Fit
@@ -736,59 +772,20 @@ export default function App() {
             when={snapshot()}
             fallback={<div class="canvas-loading">Opening diagram…</div>}
           >
-            <Show
-              when={snapshot()?.kind === "mermaid"}
-              fallback={
-                <Loading
-                  fallback={
-                    <div class="canvas-loading">Loading BPMN canvas…</div>
-                  }
-                >
-                  <BpmnSurface
-                    source={source()}
-                    {...((snapshot() as BpmnDocumentSnapshot | undefined)
-                      ?.presentationModel
-                      ? {
-                          presentation: (snapshot() as BpmnDocumentSnapshot)
-                            .presentationModel!,
-                        }
-                      : {})}
-                    onSelectionChange={(id) =>
-                      void execute({ type: "select", elementId: id })
-                    }
-                    onCommand={(command) => execute(command)}
-                    onReady={(canvas) => {
-                      bpmnCanvas = canvas;
-                      setZoom(canvas.fitViewport());
-                    }}
-                    onError={fail}
-                  />
-                </Loading>
+            <MermaidSurface
+              svg={svg()}
+              width={snapshot()?.scene?.width ?? 1}
+              height={snapshot()?.scene?.height ?? 1}
+              zoom={zoom()}
+              fitView={fitView()}
+              onZoom={setZoom}
+              disabled={!snapshot()?.commands.visualEditing}
+              selectedElementId={snapshot()?.selectedElementId}
+              onSelect={(id) => void execute({ type: "select", elementId: id })}
+              onNudge={(elementId, dx, dy) =>
+                void execute({ type: "move", elementId, dx, dy })
               }
-            >
-              <MermaidSurface
-                svg={svg()}
-                width={
-                  (snapshot() as MermaidDocumentSnapshot | undefined)?.view
-                    ?.scene?.width ?? 1
-                }
-                height={
-                  (snapshot() as MermaidDocumentSnapshot | undefined)?.view
-                    ?.scene?.height ?? 1
-                }
-                zoom={zoom()}
-                fitView={fitView()}
-                onZoom={setZoom}
-                disabled={!snapshot()?.commands.visualEditing}
-                selectedElementId={snapshot()?.selectedElementId}
-                onSelect={(id) =>
-                  void execute({ type: "select", elementId: id })
-                }
-                onNudge={(elementId, dx, dy) =>
-                  void execute({ type: "move", elementId, dx, dy })
-                }
-              />
-            </Show>
+            />
           </Show>
           <div class="stage-footer">
             <span>
@@ -796,7 +793,7 @@ export default function App() {
                 ? "Last valid preview"
                 : "Canvas current"}
             </span>
-            <span>{snapshot()?.kind === "bpmn" ? "BPMN 2.0" : "Mermaid"}</span>
+            <span>Mermaid</span>
           </div>
         </section>
         <Show
@@ -856,7 +853,111 @@ export default function App() {
                 <strong>{selectedLabel(snapshot())}</strong>
                 <code>{snapshot()?.selectedElementId}</code>
               </div>
-              <Show when={snapshot()?.kind === "mermaid"}>
+              <Show when={notationOptions(snapshot()).length > 0}>
+                <fieldset
+                  disabled={action("set-notation").state !== "available"}
+                  title={actionTitle("set-notation")}
+                >
+                  <legend>Process notation</legend>
+                  <label>
+                    Symbol{" "}
+                    <select
+                      aria-label="Process notation"
+                      value={selectedNotation(snapshot()) ?? ""}
+                      onChange={(event) => {
+                        const elementId = snapshot()?.selectedElementId;
+                        if (!elementId) return;
+                        const notation = event.currentTarget.value
+                          ? (event.currentTarget.value as NotationChoice)
+                          : undefined;
+                        const attachment = boundaryAttachments().find(
+                          ({ id }) => id === boundaryAttachment(),
+                        );
+                        void execute({
+                          type: "set-notation",
+                          elementId,
+                          notation,
+                          ...(notation === "boundary-timer" && attachment
+                            ? {
+                                boundaryTimer: {
+                                  hostId: attachment.hostId,
+                                  attachmentRelationshipId: attachment.id,
+                                },
+                              }
+                            : {}),
+                        });
+                      }}
+                    >
+                      <option value="">Ordinary Mermaid</option>
+                      {notationOptions(snapshot()).map(([value, label]) => (
+                        <option
+                          value={value}
+                          disabled={
+                            value === "boundary-timer" &&
+                            boundaryAttachments().length === 0
+                          }
+                        >
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <Show
+                    when={
+                      notationOptions(snapshot()).some(
+                        ([value]) => value === "boundary-timer",
+                      ) && boundaryAttachments().length > 0
+                    }
+                  >
+                    <label>
+                      Timeout attachment{" "}
+                      <select
+                        aria-label="Timeout attachment"
+                        value={boundaryAttachment()}
+                        onChange={(event) => {
+                          const attachmentId = event.currentTarget.value;
+                          setBoundaryAttachmentDraft(attachmentId);
+                          const elementId = snapshot()?.selectedElementId;
+                          const attachment = boundaryAttachments().find(
+                            ({ id }) => id === attachmentId,
+                          );
+                          if (
+                            elementId &&
+                            attachment &&
+                            selectedNotation(snapshot()) === "boundary-timer"
+                          ) {
+                            void execute({
+                              type: "set-notation",
+                              elementId,
+                              notation: "boundary-timer",
+                              boundaryTimer: {
+                                hostId: attachment.hostId,
+                                attachmentRelationshipId: attachment.id,
+                                ...(currentBoundaryTimer()?.anchor
+                                  ? {
+                                      anchor: currentBoundaryTimer()!.anchor,
+                                    }
+                                  : {}),
+                              },
+                            });
+                          }
+                        }}
+                      >
+                        {boundaryAttachments().map((attachment) => (
+                          <option value={attachment.id}>
+                            {attachment.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </Show>
+                  <p class="field-help">
+                    Saved in Manatee front matter. Other Mermaid viewers keep a
+                    simpler diagram.
+                  </p>
+                </fieldset>
+              </Show>
+              <Show when={applicable("move")}>
                 <fieldset disabled={action("move").state !== "available"}>
                   <legend>Move selection</legend>
                   <div class="nudge-controls">
