@@ -1,5 +1,7 @@
 # Studio UX review — 13 September 2026
 
+> Historical review of the superseded dual-format release. BPMN XML findings below no longer describe the product; current mobile requirements are in [the release guide](release.md).
+
 Reviewed the live [GitHub Pages Studio](https://mlperrott.github.io/manatee/) and implemented the corrections in the existing Solid application. The review covers first use, navigation, canvas interaction, source editing, inspector actions, file import/save, SVG/PNG export, feedback, error recovery, accessibility, responsive layout, and desktop regressions.
 
 The previous mobile exclusion in ADR-0001 is expanded by the requested iPhone workflow. Document semantics, format adapters, portable source preservation, and the existing GitHub Pages architecture remain the same.

@@ -1,16 +1,18 @@
 # Manatee
 
-Manatee presents Mermaid and BPMN diagrams for technical discussions and management presentations while keeping their meaning available as text.
+Manatee presents Mermaid-authored diagrams for technical discussions and management presentations, with formatting that supports communicating processes using BPMN notation while keeping their meaning available as text.
 
 ## Language
 
-**Semantic source**: The textual description of a diagram's elements, relationships and groupings: Mermaid syntax in a Mermaid document or BPMN 2.0 XML in a BPMN document.
+**BPMN notation**: The visual vocabulary used to communicate a business process to readers, including activity and event shapes, lanes, and connectors. In Manatee, its purpose is visual communication.
+
+**Notation choice**: The BPMN symbol or connector convention an author assigns to a process element to communicate its role to readers.
+
+**Semantic source**: The Mermaid textual description of a diagram's elements, relationships and groupings.
 
 **Mermaid document**: A Mermaid semantic source with presentation overrides in its `manatee` front-matter section.
 
-**BPMN document**: A portable `.bpmn` BPMN 2.0 XML source. Standard BPMN Diagram Interchange holds its shared geometry; a Manatee XML extension holds richer presentation overrides.
-
-**BPMN Diagram Interchange**: The standard BPMN XML shapes, bounds, edges and waypoints that allow laid-out process and collaboration diagrams to move between BPMN tools.
+**Mermaid fallback**: The simpler process diagram shown by an ordinary Mermaid viewer, retaining the authored process structure while Manatee supplies richer BPMN notation and presentation.
 
 **Presentation override**: A saved adjustment to a diagram's appearance, such as a manually chosen position, spacing or styling.
 
@@ -24,7 +26,7 @@ Manatee presents Mermaid and BPMN diagrams for technical discussions and managem
 
 **Node attribute**: A named value associated with a node, such as its status, that can be used to determine its presentation.
 
-**Styling rule**: A declarative association between matching diagram elements and presentation properties. Mermaid elements can be matched by attributes or classes; BPMN elements can be matched by their standard type or properties.
+**Styling rule**: A declarative association between matching diagram elements and presentation properties. Mermaid elements can be matched by attributes or classes.
 
 **Node fill**: The colour of the interior of a node, independent of its outline.
 

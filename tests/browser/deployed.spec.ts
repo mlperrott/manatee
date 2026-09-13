@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("deployed release loads workers, lazy BPMN, files, and exports", async ({
+test("deployed release loads workers, process notation, files, and exports", async ({
   page,
 }) => {
   test.skip(!process.env.MANATEE_BASE_URL, "Runs after a Pages deployment.");
@@ -26,7 +26,9 @@ test("deployed release loads workers, lazy BPMN, files, and exports", async ({
     "deployed-smoke.svg",
   );
 
-  await page.getByRole("button", { name: "BPMN example" }).click();
-  await expect(page.locator(".bpmn-surface .djs-container")).toBeVisible();
+  await page.getByRole("button", { name: "Process example" }).click();
+  await expect(
+    page.locator('[data-notation="exclusive-gateway"]'),
+  ).toBeVisible();
   expect(failedResponses).toEqual([]);
 });

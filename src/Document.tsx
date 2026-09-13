@@ -12,7 +12,7 @@ export default function Document(props: ParentProps) {
         />
         <meta
           name="description"
-          content="A presentation editor for portable Mermaid and BPMN diagrams."
+          content="A presentation editor for portable Mermaid diagrams with process notation."
         />
         <meta name="theme-color" content="#143d3c" />
         <title>Manatee — Diagram studio</title>

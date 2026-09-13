@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { DocumentCommand } from "./DocumentEngine";
+import type { DocumentCommand } from "./commands";
 import {
   DocumentSession,
   type DocumentStore,
   type SavedDocument,
-  type SessionDocumentAdapter,
+  type SessionDocument,
 } from "./DocumentSession";
-import type { DocumentHint, DocumentKind, DocumentSnapshot } from "./types";
+import type { MermaidDocumentSnapshot } from "../../mermaid/MermaidDocument";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -17,17 +17,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function snapshot(
-  source: string,
-  kind: DocumentKind = "mermaid",
-): DocumentSnapshot {
+function snapshot(source: string): MermaidDocumentSnapshot {
   const valid = !source.endsWith("[");
   return Object.freeze({
-    kind,
     source,
-    semanticModel: valid ? {} : undefined,
-    presentationModel: valid ? {} : undefined,
-    view: valid ? { source } : undefined,
+    model: undefined,
+    metadata: undefined,
+    scene: undefined,
     diagnostics: [],
     selectedElementId: undefined,
     valid,
@@ -40,9 +36,8 @@ function snapshot(
       redo: false,
       presentation: {
         move: { state: "inapplicable" },
-        resize: { state: "inapplicable" },
-        route: { state: "inapplicable" },
         "set-appearance": { state: "inapplicable" },
+        "set-notation": { state: "inapplicable" },
         "set-attribute": { state: "inapplicable" },
         "create-styling-rule": { state: "inapplicable" },
         "set-spacing": { state: "inapplicable" },
@@ -51,34 +46,27 @@ function snapshot(
         "cleanup-unmatched": { state: "inapplicable" },
       },
     } as const,
-  });
+  }) as MermaidDocumentSnapshot;
 }
 
-class FakeAdapter implements SessionDocumentAdapter {
-  readonly kind: DocumentKind;
+class FakeDocument implements SessionDocument {
   readonly replacements: string[] = [];
   readonly events: string[] = [];
   disposed = false;
   openCalls = 0;
-  current: DocumentSnapshot | undefined;
-  openResult: (source: string) => Promise<DocumentSnapshot>;
-  replaceResult: (source: string) => Promise<DocumentSnapshot>;
+  current: MermaidDocumentSnapshot | undefined;
+  openResult: (source: string) => Promise<MermaidDocumentSnapshot>;
+  replaceResult: (source: string) => Promise<MermaidDocumentSnapshot>;
 
   constructor(
-    kind: DocumentKind = "mermaid",
-    openResult = async (source: string) => snapshot(source, kind),
-    replaceResult = async (source: string) => snapshot(source, kind),
+    openResult = async (source: string) => snapshot(source),
+    replaceResult = async (source: string) => snapshot(source),
   ) {
-    this.kind = kind;
     this.openResult = openResult;
     this.replaceResult = replaceResult;
   }
 
-  matches(_source: string, _hint?: DocumentHint): boolean {
-    return true;
-  }
-
-  async open(source: string): Promise<DocumentSnapshot> {
+  async open(source: string): Promise<MermaidDocumentSnapshot> {
     this.openCalls += 1;
     this.current = await this.openResult(source);
     return this.current;
@@ -93,14 +81,14 @@ class FakeAdapter implements SessionDocumentAdapter {
     return { snapshot: this.snapshot(), patches: [] };
   }
 
-  async replaceSource(source: string): Promise<DocumentSnapshot> {
+  async replaceSource(source: string): Promise<MermaidDocumentSnapshot> {
     this.events.push(`replace:${source}`);
     this.replacements.push(source);
     this.current = await this.replaceResult(source);
     return this.current;
   }
 
-  snapshot(): DocumentSnapshot {
+  snapshot(): MermaidDocumentSnapshot {
     if (!this.current) throw new Error("Document is not open.");
     return this.current;
   }
@@ -132,33 +120,28 @@ class MemoryStore implements DocumentStore {
   }
 }
 
-function registrations(adapters: FakeAdapter[]) {
-  return {
-    mermaid: { create: () => adapters.shift()! },
-    bpmn: { create: () => new FakeAdapter("bpmn") },
-  };
+function documentFactory(documents: FakeDocument[]) {
+  return () => documents.shift()!;
 }
 
 afterEach(() => vi.useRealTimers());
 
 describe("DocumentSession", () => {
   it("prevents a delayed document open from replacing a newer document", async () => {
-    const firstOpen = deferred<DocumentSnapshot>();
-    const first = new FakeAdapter("mermaid", () => firstOpen.promise);
-    const second = new FakeAdapter();
+    const firstOpen = deferred<MermaidDocumentSnapshot>();
+    const first = new FakeDocument(() => firstOpen.promise);
+    const second = new FakeDocument();
     const session = new DocumentSession({
-      adapters: registrations([first, second]),
+      createDocument: documentFactory([first, second]),
       store: new MemoryStore(),
     });
 
     const openingFirst = session.open({
-      kind: "mermaid",
       filename: "first.mmd",
       source: "first",
     });
     await vi.waitFor(() => expect(first.openCalls).toBe(1));
     await session.open({
-      kind: "mermaid",
       filename: "second.mmd",
       source: "second",
     });
@@ -177,18 +160,18 @@ describe("DocumentSession", () => {
 
   it("publishes only the latest debounced source edit", async () => {
     vi.useFakeTimers();
-    const firstEdit = deferred<DocumentSnapshot>();
-    const adapter = new FakeAdapter("mermaid", undefined, (source) =>
+    const firstEdit = deferred<MermaidDocumentSnapshot>();
+    const active = new FakeDocument(undefined, (source) =>
       source === "first"
         ? firstEdit.promise
         : Promise.resolve(snapshot(source)),
     );
     const session = new DocumentSession({
-      adapters: registrations([adapter]),
+      createDocument: documentFactory([active]),
       store: new MemoryStore(),
       sourceEditDelayMs: 20,
     });
-    await session.open({ kind: "mermaid", filename: "a.mmd", source: "base" });
+    await session.open({ filename: "a.mmd", source: "base" });
 
     session.editSource("first");
     await vi.advanceTimersByTimeAsync(20);
@@ -199,24 +182,24 @@ describe("DocumentSession", () => {
       expect(session.state().snapshot?.source).toBe("second"),
     );
 
-    expect(adapter.replacements).toEqual(["first", "second"]);
+    expect(active.replacements).toEqual(["first", "second"]);
     expect(session.state().source).toBe("second");
     session.dispose();
   });
 
   it("applies pending source text before a following command", async () => {
-    const adapter = new FakeAdapter();
+    const active = new FakeDocument();
     const session = new DocumentSession({
-      adapters: registrations([adapter]),
+      createDocument: documentFactory([active]),
       store: new MemoryStore(),
       sourceEditDelayMs: 10_000,
     });
-    await session.open({ kind: "mermaid", filename: "a.mmd", source: "base" });
+    await session.open({ filename: "a.mmd", source: "base" });
 
     session.editSource("typed");
     await session.execute({ type: "select", elementId: "A" });
 
-    expect(adapter.events).toEqual(["replace:typed", "execute:select"]);
+    expect(active.events).toEqual(["replace:typed", "execute:select"]);
     expect(session.state().source).toBe("typed");
     session.dispose();
   });
@@ -226,16 +209,14 @@ describe("DocumentSession", () => {
     const store = new MemoryStore();
     store.loadResult = () => loaded.promise;
     const session = new DocumentSession({
-      adapters: registrations([new FakeAdapter()]),
+      createDocument: documentFactory([new FakeDocument()]),
       store,
     });
     const initializing = session.initialize({
-      kind: "mermaid",
       filename: "fallback.mmd",
       source: "fallback",
     });
     await session.open({
-      kind: "mermaid",
       filename: "chosen.mmd",
       source: "chosen",
     });
@@ -258,17 +239,15 @@ describe("DocumentSession", () => {
     store.saveResult = (record) =>
       record.filename === "first.mmd" ? firstSave.promise : Promise.resolve();
     const session = new DocumentSession({
-      adapters: registrations([new FakeAdapter(), new FakeAdapter()]),
+      createDocument: documentFactory([new FakeDocument(), new FakeDocument()]),
       store,
       now: () => 42,
     });
     await session.initialize({
-      kind: "mermaid",
       filename: "first.mmd",
       source: "first",
     });
     await session.open({
-      kind: "mermaid",
       filename: "second.mmd",
       source: "second",
     });
@@ -289,19 +268,18 @@ describe("DocumentSession", () => {
     const store = new MemoryStore();
     store.loaded = {
       filename: "recovered.mmd",
-      kind: "mermaid",
+      schemaVersion: 2,
       source: "flowchart LR\nA[",
       lastValidSource: "flowchart LR\nA --> B",
       savedAt: 1,
     };
-    const fallback = new FakeAdapter();
-    const recovered = new FakeAdapter();
+    const fallback = new FakeDocument();
+    const recovered = new FakeDocument();
     const session = new DocumentSession({
-      adapters: registrations([fallback, recovered]),
+      createDocument: documentFactory([fallback, recovered]),
       store,
     });
     await session.initialize({
-      kind: "mermaid",
       filename: "example.mmd",
       source: "example",
     });

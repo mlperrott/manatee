@@ -94,6 +94,61 @@
       },
       "additionalProperties": true
     },
+    "nodeNotation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "enum": [
+                "task",
+                "start-event",
+                "end-event",
+                "exclusive-gateway",
+                "parallel-gateway",
+                "timer-event",
+                "collapsed-subprocess"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "required": ["type", "host", "attachment"],
+          "properties": {
+            "type": { "const": "boundary-timer" },
+            "host": { "type": "string", "minLength": 1 },
+            "attachment": { "type": "string", "minLength": 1 },
+            "anchor": {
+              "type": "object",
+              "required": ["side", "offset"],
+              "properties": {
+                "side": { "enum": ["top", "right", "bottom", "left"] },
+                "offset": { "type": "number", "minimum": 0, "maximum": 1 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "containerNotation": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "enum": ["pool", "lane"] } },
+      "additionalProperties": true
+    },
+    "relationshipNotation": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["sequence-flow", "message-flow"] }
+      },
+      "additionalProperties": true
+    },
     "layout": {
       "type": "object",
       "properties": {
@@ -114,6 +169,7 @@
       "type": "object",
       "properties": {
         "position": { "$ref": "#/$defs/position" },
+        "notation": { "$ref": "#/$defs/nodeNotation" },
         "attributes": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/scalar" }
@@ -126,12 +182,19 @@
       "type": "object",
       "properties": {
         "position": { "$ref": "#/$defs/position" },
+        "notation": { "$ref": "#/$defs/containerNotation" },
         "style": { "$ref": "#/$defs/containerStyle" }
       },
       "additionalProperties": true
     },
     "relationshipEntry": {
-      "allOf": [{ "$ref": "#/$defs/relationshipStyle" }]
+      "type": "object",
+      "properties": {
+        "style": { "$ref": "#/$defs/relationshipLineStyle" },
+        "text": { "$ref": "#/$defs/textStyle" },
+        "notation": { "$ref": "#/$defs/relationshipNotation" }
+      },
+      "additionalProperties": true
     },
     "relationshipMatcher": {
       "type": "object",
@@ -149,7 +212,8 @@
       "properties": {
         "match": { "$ref": "#/$defs/relationshipMatcher" },
         "style": { "$ref": "#/$defs/relationshipLineStyle" },
-        "text": { "$ref": "#/$defs/textStyle" }
+        "text": { "$ref": "#/$defs/textStyle" },
+        "notation": { "$ref": "#/$defs/relationshipNotation" }
       },
       "additionalProperties": true
     },
