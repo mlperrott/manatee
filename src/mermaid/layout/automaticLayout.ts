@@ -680,3 +680,80 @@ export function rerouteMermaidScene(scene: MermaidScene): MermaidScene {
     ),
   });
 }
+
+export function moveMermaidScene(
+  scene: MermaidScene,
+  elementId: string,
+  dx: number,
+  dy: number,
+  boundaryTimerHosts: ReadonlyMap<string, string> = new Map(),
+): MermaidScene {
+  const movedGroups = new Set<string>();
+  if (scene.groups.some(({ id }) => id === elementId)) {
+    movedGroups.add(elementId);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const group of scene.groups) {
+        if (
+          group.parentId &&
+          movedGroups.has(group.parentId) &&
+          !movedGroups.has(group.id)
+        ) {
+          movedGroups.add(group.id);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  const movedNodes = new Set(
+    scene.nodes
+      .filter(
+        (node) =>
+          node.id === elementId ||
+          (node.parentId !== undefined && movedGroups.has(node.parentId)),
+      )
+      .map(({ id }) => id),
+  );
+  for (const [timerId, hostId] of boundaryTimerHosts) {
+    if (movedNodes.has(hostId)) movedNodes.add(timerId);
+  }
+
+  const nodes = scene.nodes.map((node) =>
+    movedNodes.has(node.id)
+      ? Object.freeze({
+          ...node,
+          x: node.x + dx,
+          y: node.y + dy,
+          manual: node.id === elementId ? true : node.manual,
+        })
+      : node,
+  );
+  const groups = expandGroups(
+    scene.groups.map((group) =>
+      movedGroups.has(group.id)
+        ? Object.freeze({
+            ...group,
+            x: group.x + dx,
+            y: group.y + dy,
+          })
+        : group,
+    ),
+    nodes,
+  );
+  const allBounds = [...nodes.map(processNodeVisualBounds), ...groups];
+  return rerouteMermaidScene(
+    Object.freeze({
+      ...scene,
+      width: Math.ceil(
+        Math.max(320, ...allBounds.map((item) => item.x + item.width + 24)),
+      ),
+      height: Math.ceil(
+        Math.max(200, ...allBounds.map((item) => item.y + item.height + 24)),
+      ),
+      nodes: Object.freeze(nodes),
+      groups: Object.freeze(groups),
+    }),
+  );
+}

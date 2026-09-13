@@ -26,6 +26,7 @@ import { inspectMermaidCompatibility } from "./compatibility";
 import { normalizeMermaidFamily } from "./normalizeFamily";
 import { boundaryTimerNotation, notationDiagnostics } from "./notation";
 import { MermaidLayout } from "./layout/MermaidLayout";
+import { moveMermaidScene } from "./layout/automaticLayout";
 import type { MermaidScene } from "./layout/types";
 import type { MermaidSemanticModel } from "./model";
 import { parseMermaidDiagram } from "./runtimeContract";
@@ -249,7 +250,7 @@ export class MermaidDocument {
     this.#requireAvailable(command);
     switch (command.type) {
       case "move":
-        return await this.#edit(this.#moveEdits(command));
+        return await this.#move(command);
       case "set-appearance":
         return await this.#edit(this.#appearanceEdits(command));
       case "set-notation":
@@ -472,6 +473,7 @@ export class MermaidDocument {
 
   async #edit(
     edits: readonly MetadataEdit[],
+    preparedScene?: MermaidScene,
   ): Promise<CommandResult<MermaidDocumentSnapshot>> {
     const patched = patchManateeMetadata(this.snapshot().source, edits);
     if (patched.patches.length === 0) {
@@ -481,6 +483,58 @@ export class MermaidDocument {
       applySourcePatches(this.snapshot().source, patched.patches),
       patched.patches,
       true,
+      preparedScene,
+    );
+  }
+
+  async #move(
+    command: Extract<PresentationCommand, { type: "move" }>,
+  ): Promise<CommandResult<MermaidDocumentSnapshot>> {
+    const edits = this.#moveEdits(command);
+    const current = this.snapshot();
+    const scene = current.scene;
+    const item = scene
+      ? [...scene.nodes, ...scene.groups].find(
+          ({ id }) => id === command.elementId,
+        )
+      : undefined;
+    if (!scene || !item || boundaryTimerNotation(current.metadata, item.id)) {
+      return await this.#edit(edits);
+    }
+    const positionEdit = edits[0];
+    if (!positionEdit || positionEdit.type !== "set") {
+      return await this.#edit(edits);
+    }
+    const position = metadataRecord(positionEdit.value);
+    const parent = item.parentId
+      ? scene.groups.find(({ id }) => id === item.parentId)
+      : undefined;
+    const isNode = scene.nodes.some(({ id }) => id === item.id);
+    const parentHeader =
+      isNode && (parent?.notation === "pool" || parent?.notation === "lane")
+        ? 36
+        : 0;
+    const targetX =
+      Number(position.x) +
+      (parent ? parent.x + parent.padding + parentHeader : 0);
+    const targetY =
+      Number(position.y) +
+      (parent ? parent.y + parent.padding + (isNode ? 28 : 0) : 0);
+    const boundaryTimerHosts = new Map(
+      scene.nodes.flatMap((node) => {
+        const notation = boundaryTimerNotation(current.metadata, node.id);
+        return notation ? [[node.id, notation.host] as const] : [];
+      }),
+    );
+    return await this.#edit(
+      edits,
+      moveMermaidScene(
+        scene,
+        item.id,
+        targetX - item.x,
+        targetY - item.y,
+        boundaryTimerHosts,
+      ),
     );
   }
 
@@ -495,6 +549,7 @@ export class MermaidDocument {
     source: string,
     patches: readonly SourcePatch[],
     requireValid: boolean,
+    preparedScene?: MermaidScene,
   ): Promise<CommandResult<MermaidDocumentSnapshot>> {
     const before = this.snapshot();
     if (source === before.source) return { snapshot: before, patches: [] };
@@ -505,13 +560,28 @@ export class MermaidDocument {
           "The source patch did not produce a valid document.",
       );
     }
-    const provisional = this.#createSnapshot(
+    const created = this.#createSnapshot(
       source,
       parsed,
       before,
       before.selectedElementId,
     );
-    const after = await this.#present(provisional, before.model, true);
+    const provisional = preparedScene
+      ? Object.freeze({
+          ...created,
+          scene: Object.freeze({
+            ...preparedScene,
+            sourceModel: parsed.valid
+              ? parsed.model
+              : preparedScene.sourceModel,
+          }),
+        })
+      : created;
+    const after = await this.#present(
+      provisional,
+      before.model,
+      preparedScene === undefined,
+    );
     const entry = {
       before,
       after,
@@ -641,9 +711,19 @@ export class MermaidDocument {
     const parent = item.parentId
       ? scene?.groups.find(({ id }) => id === item.parentId)
       : undefined;
-    const x = item.x + command.dx - (parent ? parent.x + parent.padding : 0);
+    const isNode = scene?.nodes.some(({ id }) => id === item.id) ?? false;
+    const parentHeader =
+      isNode && (parent?.notation === "pool" || parent?.notation === "lane")
+        ? 36
+        : 0;
+    const x =
+      item.x +
+      command.dx -
+      (parent ? parent.x + parent.padding + parentHeader : 0);
     const y =
-      item.y + command.dy - (parent ? parent.y + parent.padding + 28 : 0);
+      item.y +
+      command.dy -
+      (parent ? parent.y + parent.padding + (isNode ? 28 : 0) : 0);
     return [
       {
         type: "set",
@@ -919,7 +999,7 @@ export class MermaidDocument {
     previousModel: MermaidSemanticModel | undefined,
     relayout: boolean,
   ): Promise<MermaidDocumentSnapshot> {
-    let scene = this.#current?.scene;
+    let scene = snapshot.scene ?? this.#current?.scene;
     if (relayout && snapshot.valid && snapshot.model) {
       scene = await this.#layout.layout({
         model: snapshot.model,
