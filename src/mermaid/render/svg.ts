@@ -1,3 +1,5 @@
+import { hasExternalLabel, nodeLabelBounds } from "../layout/labels";
+import { PROCESS_CONTAINER_HEADER } from "../layout/geometry";
 import type {
   ComputedNodeStyle,
   LayoutNode,
@@ -40,7 +42,7 @@ function dash(style: "solid" | "dashed" | "dotted"): string {
 function nodeShape(node: LayoutNode, style: ComputedNodeStyle): string {
   const fill = paint(style.fill, "#ffffff");
   const stroke = paint(style.outline.color, "#64748b");
-  const attributes = `fill="${fill}" stroke="${stroke}" stroke-width="${style.outline.width}"${dash(style.outline.style)}`;
+  const attributes = `fill="${fill}" stroke="${stroke}" stroke-width="${style.outline.width}"${node.notation ? "" : dash(style.outline.style)}`;
   const { x, y, width, height } = node;
   const cx = x + width / 2;
   const cy = y + height / 2;
@@ -170,16 +172,41 @@ function label(
   center: Point,
   style: ComputedNodeStyle["text"],
   className: string,
+  maxWidth = Infinity,
 ): string {
   const lines: TextRun[][] = [[]];
+  const maxCharacters = Math.max(8, Math.floor(maxWidth / (style.size * 0.56)));
+  let lineLength = 0;
   for (const run of textRuns(value)) {
     const parts = run.text.split("\n");
     parts.forEach((part, index) => {
-      if (index > 0) lines.push([]);
-      if (part) lines.at(-1)?.push({ ...run, text: part });
+      if (index > 0) {
+        lines.push([]);
+        lineLength = 0;
+      }
+      for (const token of part.split(/(\s+)/u).filter(Boolean)) {
+        if (!token.trim() && lineLength === 0) continue;
+        if (
+          token.trim() &&
+          lineLength > 0 &&
+          lineLength + token.length > maxCharacters
+        ) {
+          const last = lines.at(-1)!.at(-1);
+          if (last)
+            lines.at(-1)![lines.at(-1)!.length - 1] = {
+              ...last,
+              text: last.text.trimEnd(),
+            };
+          lines.push([]);
+          lineLength = 0;
+        }
+        lines.at(-1)!.push({ ...run, text: token });
+        lineLength += token.length;
+      }
     });
   }
-  const firstY = center.y - ((lines.length - 1) * style.size * 1.25) / 2;
+  const firstY =
+    center.y + style.size * 0.35 - ((lines.length - 1) * style.size * 1.25) / 2;
   const tspans = lines
     .map(
       (line, lineIndex) =>
@@ -191,7 +218,7 @@ function label(
           .join("")}</tspan>`,
     )
     .join("");
-  return `<text class="${className}" text-anchor="middle" dominant-baseline="middle" fill="${paint(style.color, "#172033")}" font-size="${style.size}" font-weight="${style.weight}"${style.italic ? ' font-style="italic"' : ""}>${tspans}</text>`;
+  return `<text class="${className}" text-anchor="middle" fill="${paint(style.color, "#172033")}" font-size="${style.size}" font-weight="${style.weight}"${style.italic ? ' font-style="italic"' : ""}>${tspans}</text>`;
 }
 
 function path(points: readonly Point[]): string {
@@ -213,7 +240,18 @@ export function renderMermaidSvg(
   options: MermaidSvgOptions = {},
 ): string {
   const selection = options.selectedElementId;
-  const groups = scene.groups
+  const groupById = new Map(scene.groups.map((group) => [group.id, group]));
+  const depth = (id: string): number => {
+    let parent = groupById.get(id)?.parentId;
+    const visited = new Set([id]);
+    while (parent && !visited.has(parent)) {
+      visited.add(parent);
+      parent = groupById.get(parent)?.parentId;
+    }
+    return visited.size;
+  };
+  const groups = [...scene.groups]
+    .sort((a, b) => depth(a.id) - depth(b.id))
     .map((group) => {
       const selected = group.id === selection ? " selected" : "";
       const fill = paint(group.style.fill, "#f1f5f9");
@@ -221,7 +259,7 @@ export function renderMermaidSvg(
       const processContainer =
         group.notation === "pool" || group.notation === "lane";
       const header = processContainer
-        ? `<path d="M ${group.x + 36} ${group.y} V ${group.y + group.height}" fill="none" stroke="${stroke}" stroke-width="${group.style.outline.width}"/>${label(group.label, { x: group.x + 18, y: group.y + group.height / 2 }, group.style.text, "group-label vertical-label")}`
+        ? `<path d="M ${group.x + PROCESS_CONTAINER_HEADER} ${group.y} V ${group.y + group.height}" fill="none" stroke="${stroke}" stroke-width="${group.style.outline.width}"/><g transform="translate(${group.x + PROCESS_CONTAINER_HEADER / 2} ${group.y + group.height / 2}) rotate(-90)">${label(group.label, { x: 0, y: 0 }, group.style.text, "group-label")}</g>`
         : label(
             group.label,
             { x: group.x + group.width / 2, y: group.y + 18 },
@@ -237,55 +275,47 @@ export function renderMermaidSvg(
       const color = paint(relationship.style.color, "#64748b");
       const markerId = `arrow-${index}`;
       const messageFlow = relationship.notation === "message-flow";
+      const sequenceFlow = relationship.notation === "sequence-flow";
       const open =
-        messageFlow ||
-        relationship.kind.includes("open") ||
-        relationship.kind === "arrow_open";
-      const marker = relationship.kind.includes("circle")
-        ? `<circle cx="5" cy="5" r="3.5" fill="none" stroke="${color}" stroke-width="1.5"/>`
-        : relationship.kind.includes("cross")
-          ? `<path d="M 2 2 L 8 8 M 8 2 L 2 8" fill="none" stroke="${color}" stroke-width="1.75"/>`
-          : `<path d="M 0 0 L 10 5 L 0 10 z" fill="${open ? "none" : color}" stroke="${color}"/>`;
-      const startMarker = relationship.kind.includes("double")
-        ? ` marker-start="url(#${markerId})"`
-        : "";
+        !sequenceFlow &&
+        (messageFlow ||
+          relationship.kind.includes("open") ||
+          relationship.kind === "arrow_open");
+      const marker =
+        !relationship.notation && relationship.kind.includes("circle")
+          ? `<circle cx="5" cy="5" r="3.5" fill="none" stroke="${color}" stroke-width="1.5"/>`
+          : !relationship.notation && relationship.kind.includes("cross")
+            ? `<path d="M 2 2 L 8 8 M 8 2 L 2 8" fill="none" stroke="${color}" stroke-width="1.75"/>`
+            : `<path d="M 0 0 L 10 5 L 0 10 z" fill="${open ? "none" : color}" stroke="${color}"/>`;
+      const startMarker =
+        !relationship.notation && relationship.kind.includes("double")
+          ? ` marker-start="url(#${markerId})"`
+          : "";
       const lineDash = messageFlow
         ? ' stroke-dasharray="7 5"'
-        : dash(relationship.style.style);
+        : sequenceFlow
+          ? ""
+          : dash(relationship.style.style);
       const start = relationship.points[0];
       const messageStart =
         messageFlow && start
           ? `<circle cx="${start.x}" cy="${start.y}" r="4" fill="#ffffff" stroke="${color}" stroke-width="1.5"/>`
           : "";
-      return `<g class="relationship${selected}" data-element-id="${escapeAttribute(relationship.id)}"${relationship.notation ? ` data-notation="${relationship.notation}"` : ""}><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">${marker}</marker></defs><path d="${path(relationship.points)}" fill="none" stroke="${color}" stroke-width="${relationship.style.width}"${lineDash}${startMarker} marker-end="url(#${markerId})"/>${messageStart}${relationship.label ? label(relationship.label, midpoint(relationship.points), relationship.style.text, "relationship-label") : ""}</g>`;
+      return `<g class="relationship${selected}" data-element-id="${escapeAttribute(relationship.id)}"${relationship.notation ? ` data-notation="${relationship.notation}"` : ""}><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">${marker}</marker></defs><path d="${path(relationship.points)}" fill="none" stroke="${color}" stroke-width="${relationship.style.width}"${lineDash}${startMarker} marker-end="url(#${markerId})"/>${messageStart}${relationship.label ? label(relationship.label, relationship.labelBounds ? { x: relationship.labelBounds.x + relationship.labelBounds.width / 2, y: relationship.labelBounds.y + relationship.labelBounds.height / 2 } : midpoint(relationship.points), relationship.style.text, "relationship-label", 240) : ""}</g>`;
     })
     .join("");
   const nodes = scene.nodes
     .map((node) => {
       const selected = node.id === selection ? " selected" : "";
-      const externalLabel =
-        node.notation === "boundary-timer" ||
-        node.notation === "start-event" ||
-        node.notation === "end-event" ||
-        node.notation === "timer-event" ||
-        node.notation === "exclusive-gateway" ||
-        node.notation === "parallel-gateway";
-      const nodeLabel = externalLabel
-        ? label(
-            node.label,
-            {
-              x: node.x + node.width / 2,
-              y: node.y + node.height + node.style.text.size,
-            },
-            node.style.text,
-            "node-label process-symbol-label",
-          )
-        : label(
-            node.label,
-            { x: node.x + node.width / 2, y: node.y + node.height / 2 },
-            node.style.text,
-            "node-label",
-          );
+      const externalLabel = hasExternalLabel(node.notation);
+      const bounds = nodeLabelBounds(node);
+      const nodeLabel = label(
+        node.label,
+        { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 },
+        node.style.text,
+        externalLabel ? "node-label process-symbol-label" : "node-label",
+        externalLabel ? 240 : Math.max(40, node.width - 32),
+      );
       return `<g class="node${selected}" data-element-id="${escapeAttribute(node.id)}"${node.notation ? ` data-notation="${node.notation}"` : ""}>${nodeShape(node, node.style)}${nodeLabel}</g>`;
     })
     .join("");
@@ -295,7 +325,7 @@ export function renderMermaidSvg(
   const title = options.title
     ? `<title>${escapeText(options.title)}</title>`
     : "";
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.vertical-label{writing-mode:vertical-rl;transform-box:fill-box;transform-origin:center;transform:rotate(180deg)}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,.selected>path{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}</style>${groups}${relationships}${nodes}${outdated}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,.selected>path{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}</style>${groups}${relationships}${nodes}${outdated}</svg>`;
 }
 
 export const renderMermaidPreviewSvg = renderMermaidSvg;

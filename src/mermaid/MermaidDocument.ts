@@ -26,6 +26,7 @@ import { inspectMermaidCompatibility } from "./compatibility";
 import { normalizeMermaidFamily } from "./normalizeFamily";
 import { boundaryTimerNotation, notationDiagnostics } from "./notation";
 import { MermaidLayout } from "./layout/MermaidLayout";
+import { contentOrigin } from "./layout/geometry";
 import { moveMermaidScene } from "./layout/automaticLayout";
 import type { MermaidScene } from "./layout/types";
 import type { MermaidSemanticModel } from "./model";
@@ -164,10 +165,8 @@ async function parseDocument(source: string): Promise<MermaidParseResult> {
     );
   }
 
-  const processDiagnostics = [
-    ...model.diagnostics,
-    ...notationDiagnostics(model, metadata.metadata),
-  ];
+  const notationProblems = notationDiagnostics(model, metadata.metadata);
+  const processDiagnostics = [...model.diagnostics, ...notationProblems];
   if (processDiagnostics.some(({ severity }) => severity === "error")) {
     return {
       valid: false,
@@ -180,7 +179,7 @@ async function parseDocument(source: string): Promise<MermaidParseResult> {
     model,
     metadata: metadata.metadata,
     diagnostics: processDiagnostics,
-    visualEditing: metadata.visualEditing,
+    visualEditing: metadata.visualEditing && notationProblems.length === 0,
   };
 }
 
@@ -303,12 +302,9 @@ export class MermaidDocument {
           },
         ]);
       case "use-automatic-position":
-        return await this.#edit([
-          {
-            type: "remove",
-            path: this.#positionPath(command.elementId),
-          },
-        ]);
+        return await this.#edit(
+          this.#automaticPositionEdits(command.elementId),
+        );
       case "reset-layout":
         return await this.#edit(this.#resetLayoutEdits());
       case "cleanup-unmatched":
@@ -510,16 +506,9 @@ export class MermaidDocument {
       ? scene.groups.find(({ id }) => id === item.parentId)
       : undefined;
     const isNode = scene.nodes.some(({ id }) => id === item.id);
-    const parentHeader =
-      isNode && (parent?.notation === "pool" || parent?.notation === "lane")
-        ? 36
-        : 0;
-    const targetX =
-      Number(position.x) +
-      (parent ? parent.x + parent.padding + parentHeader : 0);
-    const targetY =
-      Number(position.y) +
-      (parent ? parent.y + parent.padding + (isNode ? 28 : 0) : 0);
+    const origin = contentOrigin(parent, isNode);
+    const targetX = Number(position.x) + origin.x;
+    const targetY = Number(position.y) + origin.y;
     const boundaryTimerHosts = new Map(
       scene.nodes.flatMap((node) => {
         const notation = boundaryTimerNotation(current.metadata, node.id);
@@ -554,7 +543,7 @@ export class MermaidDocument {
     const before = this.snapshot();
     if (source === before.source) return { snapshot: before, patches: [] };
     const parsed = await parseDocument(source);
-    if (requireValid && !parsed.valid) {
+    if (requireValid && (!parsed.valid || !parsed.visualEditing)) {
       throw new UnsafeSourcePatchError(
         parsed.diagnostics[0]?.message ??
           "The source patch did not produce a valid document.",
@@ -634,7 +623,11 @@ export class MermaidDocument {
       dirty: source !== this.#initialSource,
       commands: Object.freeze({
         visualEditing: valid && (parsed.visualEditing ?? true),
-        imageExport: valid,
+        imageExport:
+          valid &&
+          !parsed.diagnostics.some(({ code }) =>
+            code.startsWith("manatee.notation."),
+          ),
         undo: false,
         redo: false,
         presentation: presentationAvailability({}),
@@ -712,18 +705,9 @@ export class MermaidDocument {
       ? scene?.groups.find(({ id }) => id === item.parentId)
       : undefined;
     const isNode = scene?.nodes.some(({ id }) => id === item.id) ?? false;
-    const parentHeader =
-      isNode && (parent?.notation === "pool" || parent?.notation === "lane")
-        ? 36
-        : 0;
-    const x =
-      item.x +
-      command.dx -
-      (parent ? parent.x + parent.padding + parentHeader : 0);
-    const y =
-      item.y +
-      command.dy -
-      (parent ? parent.y + parent.padding + (isNode ? 28 : 0) : 0);
+    const origin = contentOrigin(parent, isNode);
+    const x = item.x + command.dx - origin.x;
+    const y = item.y + command.dy - origin.y;
     return [
       {
         type: "set",
@@ -853,33 +837,23 @@ export class MermaidDocument {
     ];
   }
 
+  #automaticPositionEdits(elementId: string): MetadataEdit[] {
+    const paths = [this.#positionPath(elementId)];
+    if (boundaryTimerNotation(this.snapshot().metadata, elementId)) {
+      paths.push(["elements", "nodes", elementId, "notation", "anchor"]);
+    }
+    return paths
+      .filter(
+        (path) => valueAt(metadataRecord(this.snapshot()), path) !== undefined,
+      )
+      .map((path) => ({ type: "remove", path }));
+  }
+
   #resetLayoutEdits(): MetadataEdit[] {
     const model = this.snapshot().model!;
-    return [
-      ...model.nodes.map(({ id }) => ({
-        type: "remove" as const,
-        path: ["elements", "nodes", id, "position"] as const,
-      })),
-      ...model.groups.map(({ id, kind }) => ({
-        type: "remove" as const,
-        path: [
-          "elements",
-          kind === "lane" ? "lanes" : "groups",
-          id,
-          "position",
-        ] as const,
-      })),
-      ...model.nodes.flatMap(({ id }) =>
-        boundaryTimerNotation(this.snapshot().metadata, id)
-          ? [
-              {
-                type: "remove" as const,
-                path: ["elements", "nodes", id, "notation", "anchor"] as const,
-              },
-            ]
-          : [],
-      ),
-    ];
+    return [...model.nodes, ...model.groups].flatMap(({ id }) =>
+      this.#automaticPositionEdits(id),
+    );
   }
 
   #unmatched() {
@@ -957,7 +931,16 @@ export class MermaidDocument {
     const positionPath =
       selected && !relationship ? this.#positionPath(selected.id) : [];
     const hasPosition =
-      positionPath.length > 0 && valueAt(metadata, positionPath) !== undefined;
+      positionPath.length > 0 &&
+      (valueAt(metadata, positionPath) !== undefined ||
+        (node &&
+          valueAt(metadata, [
+            "elements",
+            "nodes",
+            node.id,
+            "notation",
+            "anchor",
+          ]) !== undefined));
     return presentationAvailability({
       move: node || group ? available : selectReason,
       "set-appearance":
@@ -999,7 +982,7 @@ export class MermaidDocument {
     previousModel: MermaidSemanticModel | undefined,
     relayout: boolean,
   ): Promise<MermaidDocumentSnapshot> {
-    let scene = snapshot.scene ?? this.#current?.scene;
+    let scene = snapshot.scene;
     if (relayout && snapshot.valid && snapshot.model) {
       scene = await this.#layout.layout({
         model: snapshot.model,
@@ -1059,7 +1042,12 @@ function hasAnyManualPosition(metadata: Record<string, unknown>): boolean {
   const elements = metadataRecord(metadata.elements);
   return ["nodes", "groups", "lanes"].some((category) =>
     Object.values(metadataRecord(elements[category])).some(
-      (entry) => metadataRecord(entry).position !== undefined,
+      (entry) =>
+        metadataRecord(entry).position !== undefined ||
+        (category === "nodes" &&
+          metadataRecord(metadataRecord(entry).notation).type ===
+            "boundary-timer" &&
+          metadataRecord(metadataRecord(entry).notation).anchor !== undefined),
     ),
   );
 }

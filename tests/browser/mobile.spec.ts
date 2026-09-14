@@ -223,3 +223,24 @@ test("Save preserves the latest text even before the preview updates", async ({
   const download = await downloadPromise;
   expect(await readFile((await download.path())!, "utf8")).toBe(latest);
 });
+
+test("notation controls are touch sized and explain timeout hosts only when needed", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('[data-element-id="review"]').tap();
+  await view(page, "Inspector");
+  await expect(page.getByLabel("Timeout task")).toHaveCount(0);
+  const symbol = page.getByLabel("Process notation");
+  expect((await symbol.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  expect(
+    await symbol.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+  ).toBeGreaterThanOrEqual(16);
+  await view(page, "Canvas");
+  await page.locator('[data-element-id="timeout"]').tap();
+  await view(page, "Inspector");
+  const host = page.getByLabel("Timeout task");
+  await expect(host).toBeVisible();
+  expect((await host.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(host.locator("option:checked")).toHaveText("Review request");
+});

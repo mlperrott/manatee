@@ -7,6 +7,7 @@ import {
   renderMermaidSvg,
   type MermaidDocumentSnapshot,
 } from "./mermaid";
+import { canHostBoundaryTimer } from "./mermaid/notation";
 import processExample from "./mermaid/fixtures/process-notation.mmd?raw";
 import { initialEditorUiState, sourceToggleLabel } from "./app/editorUiState";
 import { MermaidSurface } from "./app/MermaidSurface";
@@ -91,12 +92,25 @@ function boundaryAttachmentOptions(
     relationship.target === timerId &&
     relationship.source !== timerId &&
     relationship.identity.kind === "authored" &&
-    current.model?.nodes.some(({ id }) => id === relationship.source)
+    canHostBoundaryTimer(current.model!, current.metadata, relationship.source)
       ? [
           {
             id: relationship.identity.id,
             hostId: relationship.source,
-            label: `${relationship.source} via ${relationship.identity.id}`,
+            label: (() => {
+              const host = current.model!.nodes.find(
+                ({ id }) => id === relationship.source,
+              )!;
+              const sameHost = current.model!.relationships.filter(
+                (edge) =>
+                  edge.source === host.id &&
+                  edge.target === timerId &&
+                  edge.identity.kind === "authored",
+              );
+              return sameHost.length > 1
+                ? `${host.label} — ${relationship.label || `connection ${sameHost.indexOf(relationship) + 1}`}`
+                : host.label;
+            })(),
           },
         ]
       : [],
@@ -286,7 +300,9 @@ export default function App() {
     if (!imageExportReady() || !current || current.previewOutdated) {
       throw new Error("Fix source errors before exporting this diagram.");
     }
-    return svg();
+    return renderMermaidSvg(current.scene!, {
+      title: "Manatee Mermaid diagram",
+    });
   };
 
   const exportSvg = async () => {
@@ -663,14 +679,20 @@ export default function App() {
               <strong>
                 {!snapshot()
                   ? "Opening diagram…"
-                  : snapshot()?.valid
-                    ? "Preview current"
-                    : "Source has errors"}
+                  : source() !== snapshot()?.source
+                    ? "Updating preview…"
+                    : !snapshot()?.valid
+                      ? "Source has errors"
+                      : !snapshot()?.commands.visualEditing
+                        ? "Presentation needs attention"
+                        : "Preview current"}
               </strong>
               <span>
-                {snapshot()?.valid
+                {snapshot()?.commands.visualEditing
                   ? "Visual edits are available."
-                  : "The canvas keeps the last valid preview."}
+                  : snapshot()?.previewOutdated
+                    ? "The canvas keeps the last valid preview."
+                    : "Check the diagnostics below to continue editing."}
               </span>
             </div>
             <Show when={(snapshot()?.diagnostics.length ?? 0) > 0}>
@@ -772,26 +794,43 @@ export default function App() {
             when={snapshot()}
             fallback={<div class="canvas-loading">Opening diagram…</div>}
           >
-            <MermaidSurface
-              svg={svg()}
-              width={snapshot()?.scene?.width ?? 1}
-              height={snapshot()?.scene?.height ?? 1}
-              zoom={zoom()}
-              fitView={fitView()}
-              onZoom={setZoom}
-              disabled={!snapshot()?.commands.visualEditing}
-              selectedElementId={snapshot()?.selectedElementId}
-              onSelect={(id) => void execute({ type: "select", elementId: id })}
-              onNudge={(elementId, dx, dy) =>
-                void execute({ type: "move", elementId, dx, dy })
+            <Show
+              when={snapshot()?.scene}
+              fallback={
+                <div class="canvas-loading">
+                  Fix the diagram source to see its preview.
+                </div>
               }
-            />
+            >
+              <MermaidSurface
+                svg={svg()}
+                width={snapshot()?.scene?.width ?? 1}
+                height={snapshot()?.scene?.height ?? 1}
+                zoom={zoom()}
+                fitView={fitView()}
+                onZoom={setZoom}
+                disabled={!snapshot()?.commands.visualEditing}
+                selectedElementId={snapshot()?.selectedElementId}
+                onSelect={(id) =>
+                  void execute({ type: "select", elementId: id })
+                }
+                onNudge={(elementId, dx, dy) =>
+                  void execute({ type: "move", elementId, dx, dy })
+                }
+              />
+            </Show>
           </Show>
           <div class="stage-footer">
             <span>
-              {snapshot()?.previewOutdated
-                ? "Last valid preview"
-                : "Canvas current"}
+              {!snapshot()?.scene
+                ? "No preview available"
+                : snapshot()?.previewOutdated
+                  ? "Last valid preview"
+                  : source() !== snapshot()?.source
+                    ? "Updating preview…"
+                    : !snapshot()?.commands.visualEditing
+                      ? "Check presentation settings"
+                      : "Canvas current"}
             </span>
             <span>Mermaid</span>
           </div>
@@ -904,15 +943,14 @@ export default function App() {
                   </label>
                   <Show
                     when={
-                      notationOptions(snapshot()).some(
-                        ([value]) => value === "boundary-timer",
-                      ) && boundaryAttachments().length > 0
+                      selectedNotation(snapshot()) === "boundary-timer" &&
+                      boundaryAttachments().length > 0
                     }
                   >
                     <label>
-                      Timeout attachment{" "}
+                      Timeout task{" "}
                       <select
-                        aria-label="Timeout attachment"
+                        aria-label="Timeout task"
                         value={boundaryAttachment()}
                         onChange={(event) => {
                           const attachmentId = event.currentTarget.value;
@@ -952,9 +990,32 @@ export default function App() {
                     </label>
                   </Show>
                   <p class="field-help">
-                    Saved in Manatee front matter. Other Mermaid viewers keep a
-                    simpler diagram.
+                    {selectedNotation(snapshot()) === "boundary-timer"
+                      ? "If this task takes too long, the timeout interrupts it and follows the timeout path."
+                      : selectedNotation(snapshot()) === "exclusive-gateway"
+                        ? "A decision follows one outgoing path."
+                        : selectedNotation(snapshot()) === "parallel-gateway"
+                          ? "All outgoing paths continue together."
+                          : selectedNotation(snapshot()) === "timer-event"
+                            ? "The process waits here until the timer finishes."
+                            : "Choose how this element communicates its role in the process."}
                   </p>
+                  <p class="field-help">
+                    Other Mermaid viewers show the same process as a simpler
+                    diagram.
+                  </p>
+                  <Show
+                    when={
+                      notationOptions(snapshot()).some(
+                        ([value]) => value === "boundary-timer",
+                      ) && boundaryAttachments().length === 0
+                    }
+                  >
+                    <p class="field-help">
+                      To use an interrupting timeout, connect an existing task
+                      to this timer in Source with a named connection.
+                    </p>
+                  </Show>
                 </fieldset>
               </Show>
               <Show when={applicable("move")}>

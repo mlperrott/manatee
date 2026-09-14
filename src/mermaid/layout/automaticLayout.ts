@@ -1,3 +1,4 @@
+import { route } from "./routing";
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { ElkNode } from "elkjs/lib/elk-api";
 
@@ -8,6 +9,18 @@ import type {
   MermaidRelationship,
   MermaidSemanticModel,
 } from "../model";
+import {
+  contentOrigin,
+  processContainerHeader,
+  CONTAINER_TOP_HEADER,
+} from "./geometry";
+import {
+  processNodeVisualBounds,
+  nodeLabelBounds,
+  groupLabelBounds,
+  unionBounds,
+  placeRelationshipLabels,
+} from "./labels";
 import { nodeSize } from "./measure";
 import {
   computedGroupStyle,
@@ -17,6 +30,7 @@ import {
 } from "./styles";
 import {
   boundaryTimerNotation,
+  attachedBoundaryTimer,
   groupNotation,
   nodeNotation,
   relationshipNotation,
@@ -46,33 +60,6 @@ interface MutableBounds {
 }
 
 let elk: InstanceType<typeof ELK> | undefined;
-
-const PROCESS_CONTAINER_HEADER = 36;
-
-function processContainerHeader(notation: unknown): number {
-  return notation === "pool" || notation === "lane"
-    ? PROCESS_CONTAINER_HEADER
-    : 0;
-}
-
-function attachedBoundaryTimer(
-  model: MermaidSemanticModel,
-  metadata: Readonly<Record<string, unknown>> | undefined,
-  id: string,
-) {
-  const notation = boundaryTimerNotation(metadata, id);
-  if (!notation) return undefined;
-  const attachment = model.relationships.find(
-    ({ identity }) =>
-      identity.kind === "authored" && identity.id === notation.attachment,
-  );
-  return attachment &&
-    attachment.source === notation.host &&
-    attachment.target === id &&
-    model.nodes.some(({ id: nodeId }) => nodeId === notation.host)
-    ? notation
-    : undefined;
-}
 
 function elkEngine(): InstanceType<typeof ELK> {
   elk ??=
@@ -128,6 +115,50 @@ function elkDirection(direction: string): string {
   return "RIGHT";
 }
 
+function layoutNode(
+  model: MermaidSemanticModel,
+  node: MermaidNode,
+  metadata: Readonly<Record<string, unknown>> | undefined,
+): LayoutNode {
+  const notation = nodeNotation(metadata, node.id);
+  return {
+    id: node.id,
+    label: node.label,
+    kind: node.kind,
+    notation,
+    parentId: node.parentId,
+    manual: false,
+    x: 0,
+    y: 0,
+    ...nodeSize(node.label, node.kind, notation),
+    style: computedNodeStyle(model, node, metadata),
+  };
+}
+
+function reservedNodeBounds(
+  model: MermaidSemanticModel,
+  node: MermaidNode,
+  metadata: Readonly<Record<string, unknown>> | undefined,
+): Bounds {
+  const host = layoutNode(model, node, metadata);
+  const timers = model.nodes.flatMap((timer) => {
+    const notation = attachedBoundaryTimer(model, metadata, timer.id);
+    return notation?.host === node.id
+      ? [
+          processNodeVisualBounds(
+            attachToHost(
+              layoutNode(model, timer, metadata),
+              host,
+              notation.anchor.side,
+              notation.anchor.offset,
+            ),
+          ),
+        ]
+      : [];
+  });
+  return unionBounds([processNodeVisualBounds(host), ...timers]);
+}
+
 function buildElkGraph(
   model: MermaidSemanticModel,
   layoutSpacing: LayoutSpacing,
@@ -167,7 +198,7 @@ function buildElkGraph(
           "elk.direction": elkDirection(
             group.direction ?? model.direction ?? "LR",
           ),
-          "elk.padding": `[top=${layoutSpacing.groupPadding + 28},left=${layoutSpacing.groupPadding + header},bottom=${layoutSpacing.groupPadding},right=${layoutSpacing.groupPadding}]`,
+          "elk.padding": `[top=${layoutSpacing.groupPadding + CONTAINER_TOP_HEADER},left=${layoutSpacing.groupPadding + header},bottom=${layoutSpacing.groupPadding},right=${layoutSpacing.groupPadding}]`,
           "elk.spacing.nodeNode": String(layoutSpacing.node),
           "elk.layered.spacing.nodeNodeBetweenLayers": String(
             layoutSpacing.layer,
@@ -177,10 +208,10 @@ function buildElkGraph(
     }),
     ...(nodeByParent.get(parentId) ?? [])
       .filter((node) => !attachedTimerIds.has(node.id))
-      .map((node) => ({
-        id: node.id,
-        ...nodeSize(node.label, node.kind, nodeNotation(metadata, node.id)),
-      })),
+      .map((node) => {
+        const reserved = reservedNodeBounds(model, node, metadata);
+        return { id: node.id, width: reserved.width, height: reserved.height };
+      }),
   ];
   return {
     id: "manatee-root",
@@ -266,18 +297,29 @@ function resolveAutomaticCollisions(
   nodes: LayoutNode[],
   diagnostics: DocumentDiagnostic[],
   nodeSpacing: number,
+  attachedTimerIds: ReadonlySet<string>,
 ): LayoutNode[] {
   const result: LayoutNode[] = [];
   for (const original of [...nodes].sort(
     (a, b) => Number(b.manual) - Number(a.manual),
   )) {
     let node = original;
+    if (attachedTimerIds.has(node.id)) {
+      result.push(node);
+      continue;
+    }
     if (!node.manual) {
       let attempts = 0;
       while (
         result.some(
           (other) =>
-            other.parentId === node.parentId && overlaps(node, other, 8),
+            other.parentId === node.parentId &&
+            !attachedTimerIds.has(other.id) &&
+            overlaps(
+              processNodeVisualBounds(node),
+              processNodeVisualBounds(other),
+              8,
+            ),
         ) &&
         attempts < 100
       ) {
@@ -287,7 +329,14 @@ function resolveAutomaticCollisions(
     }
     if (
       result.some(
-        (other) => other.parentId === node.parentId && overlaps(node, other, 0),
+        (other) =>
+          other.parentId === node.parentId &&
+          !attachedTimerIds.has(other.id) &&
+          overlaps(
+            processNodeVisualBounds(node),
+            processNodeVisualBounds(other),
+            0,
+          ),
       )
     ) {
       diagnostics.push({
@@ -340,26 +389,6 @@ function expandGroups(
   return initialGroups.map((group) => groups.get(group.id) ?? group);
 }
 
-function processNodeVisualBounds(node: LayoutNode): Bounds {
-  if (
-    node.notation !== "boundary-timer" &&
-    node.notation !== "start-event" &&
-    node.notation !== "end-event" &&
-    node.notation !== "timer-event" &&
-    node.notation !== "exclusive-gateway" &&
-    node.notation !== "parallel-gateway"
-  ) {
-    return node;
-  }
-  const labelWidth = Math.min(240, Math.max(node.width, node.label.length * 7));
-  return {
-    x: node.x + node.width / 2 - labelWidth / 2,
-    y: node.y,
-    width: labelWidth,
-    height: node.height + 24,
-  };
-}
-
 function absoluteBounds(
   local: ReadonlyMap<string, MutableBounds>,
   parentById: ReadonlyMap<string, string | undefined>,
@@ -380,44 +409,6 @@ function absoluteBounds(
   };
   cache.set(id, absolute);
   return absolute;
-}
-
-function route(source: Bounds, target: Bounds): Point[] {
-  const sourceCenter = {
-    x: source.x + source.width / 2,
-    y: source.y + source.height / 2,
-  };
-  const targetCenter = {
-    x: target.x + target.width / 2,
-    y: target.y + target.height / 2,
-  };
-  if (
-    Math.abs(targetCenter.x - sourceCenter.x) >=
-    Math.abs(targetCenter.y - sourceCenter.y)
-  ) {
-    const forward = targetCenter.x >= sourceCenter.x;
-    const start = {
-      x: forward ? source.x + source.width : source.x,
-      y: sourceCenter.y,
-    };
-    const end = {
-      x: forward ? target.x : target.x + target.width,
-      y: targetCenter.y,
-    };
-    const middleX = (start.x + end.x) / 2;
-    return [start, { x: middleX, y: start.y }, { x: middleX, y: end.y }, end];
-  }
-  const forward = targetCenter.y >= sourceCenter.y;
-  const start = {
-    x: sourceCenter.x,
-    y: forward ? source.y + source.height : source.y,
-  };
-  const end = {
-    x: targetCenter.x,
-    y: forward ? target.y : target.y + target.height,
-  };
-  const middleY = (start.y + end.y) / 2;
-  return [start, { x: start.x, y: middleY }, { x: end.x, y: middleY }, end];
 }
 
 function attachToHost(
@@ -484,6 +475,18 @@ export async function computeMermaidScene(
   const local = new Map<string, MutableBounds>();
   collectElkBounds(laidOut, local);
   for (const node of model.nodes) {
+    const bounds = local.get(node.id);
+    if (!bounds) continue;
+    const reserved = reservedNodeBounds(model, node, metadata);
+    const actual = layoutNode(model, node, metadata);
+    local.set(node.id, {
+      x: bounds.x - reserved.x,
+      y: bounds.y - reserved.y,
+      width: actual.width,
+      height: actual.height,
+    });
+  }
+  for (const node of model.nodes) {
     if (!attachedBoundaryTimer(model, metadata, node.id)) continue;
     local.set(node.id, {
       x: 0,
@@ -510,20 +513,23 @@ export async function computeMermaidScene(
         const parent = node.parentId
           ? model.groups.find(({ id }) => id === node.parentId)
           : undefined;
-        const parentHeader = parent
-          ? processContainerHeader(
-              groupNotation(
-                metadata,
-                parent.kind === "lane" ? "lanes" : "groups",
-                parent.id,
-              ),
-            )
-          : 0;
-        bounds.x =
-          position.x +
-          (node.parentId ? layoutSpacing.groupPadding + parentHeader : 0);
-        bounds.y =
-          position.y + (node.parentId ? layoutSpacing.groupPadding + 28 : 0);
+        const origin = contentOrigin(
+          parent
+            ? {
+                x: 0,
+                y: 0,
+                padding: layoutSpacing.groupPadding,
+                notation: groupNotation(
+                  metadata,
+                  parent.kind === "lane" ? "lanes" : "groups",
+                  parent.id,
+                ),
+              }
+            : undefined,
+          true,
+        );
+        bounds.x = position.x + origin.x;
+        bounds.y = position.y + origin.y;
         manualNodeIds.add(node.id);
       }
     }
@@ -539,10 +545,19 @@ export async function computeMermaidScene(
     ) {
       const bounds = local.get(group.id);
       if (bounds) {
-        bounds.x =
-          position.x + (group.parentId ? layoutSpacing.groupPadding : 0);
-        bounds.y =
-          position.y + (group.parentId ? layoutSpacing.groupPadding + 28 : 0);
+        const origin = contentOrigin(
+          group.parentId
+            ? {
+                x: 0,
+                y: 0,
+                padding: layoutSpacing.groupPadding,
+                notation: undefined,
+              }
+            : undefined,
+          false,
+        );
+        bounds.x = position.x + origin.x;
+        bounds.y = position.y + origin.y;
       }
     }
   }
@@ -562,11 +577,16 @@ export async function computeMermaidScene(
     })),
     diagnostics,
     layoutSpacing.node,
+    new Set(
+      model.nodes
+        .filter((node) => attachedBoundaryTimer(model, metadata, node.id))
+        .map((node) => node.id),
+    ),
   );
   const boundaryAttachments = new Map<string, string>();
   for (const node of laidOutNodes) {
     if (node.notation !== "boundary-timer") continue;
-    const notation = boundaryTimerNotation(metadata, node.id);
+    const notation = attachedBoundaryTimer(model, metadata, node.id);
     const attachment = notation
       ? model.relationships.find(
           ({ identity }) =>
@@ -619,6 +639,9 @@ export async function computeMermaidScene(
     ...nodes.map((node) => [node.id, node] as const),
     ...groups.map((group) => [group.id, group] as const),
   ]);
+  const obstacles = nodes.some((node) => node.notation)
+    ? [...nodes, ...nodes.map(nodeLabelBounds), ...groups.map(groupLabelBounds)]
+    : [];
   const relationships: LayoutRelationship[] = model.relationships.flatMap(
     (relationship) => {
       if (boundaryAttachments.get(relationship.target) === relationship.id) {
@@ -635,7 +658,7 @@ export async function computeMermaidScene(
           kind: relationship.kind,
           notation: relationshipNotation(metadata, relationship),
           label: relationship.label,
-          points: Object.freeze(route(source, target)),
+          points: Object.freeze(route(source, target, obstacles)),
           style: computedRelationshipStyle(
             relationshipMetadata(relationship, metadata),
             relationship.style,
@@ -644,7 +667,18 @@ export async function computeMermaidScene(
       ];
     },
   );
-  const allBounds = [...nodes.map(processNodeVisualBounds), ...groups];
+  const labeledRelationships = placeRelationshipLabels(
+    relationships,
+    nodes,
+    groups,
+  );
+  const allBounds = [
+    ...nodes.map(processNodeVisualBounds),
+    ...groups,
+    ...labeledRelationships.flatMap((edge) =>
+      edge.labelBounds ? [edge.labelBounds] : [],
+    ),
+  ];
   const width = Math.ceil(
     Math.max(320, ...allBounds.map((item) => item.x + item.width + 24)),
   );
@@ -656,7 +690,7 @@ export async function computeMermaidScene(
     height,
     nodes: Object.freeze(nodes),
     groups: Object.freeze(groups),
-    relationships: Object.freeze(relationships),
+    relationships: Object.freeze(labeledRelationships),
     diagnostics: Object.freeze(diagnostics),
     sourceModel: model,
   });
@@ -667,17 +701,50 @@ export function rerouteMermaidScene(scene: MermaidScene): MermaidScene {
     ...scene.nodes.map((node) => [node.id, node] as const),
     ...scene.groups.map((group) => [group.id, group] as const),
   ]);
+  const obstacles = scene.nodes.some((node) => node.notation)
+    ? [
+        ...scene.nodes,
+        ...scene.nodes.map(nodeLabelBounds),
+        ...scene.groups.map(groupLabelBounds),
+      ]
+    : [];
+  const relationships = placeRelationshipLabels(
+    scene.relationships.map((relationship) => {
+      const source = elementById.get(relationship.source);
+      const target = elementById.get(relationship.target);
+      return source && target
+        ? {
+            ...relationship,
+            points: Object.freeze(route(source, target, obstacles)),
+          }
+        : relationship;
+    }),
+    scene.nodes,
+    scene.groups,
+  );
   return Object.freeze({
     ...scene,
-    relationships: Object.freeze(
-      scene.relationships.map((relationship) => {
-        const source = elementById.get(relationship.source);
-        const target = elementById.get(relationship.target);
-        return source && target
-          ? { ...relationship, points: Object.freeze(route(source, target)) }
-          : relationship;
-      }),
+    width: Math.ceil(
+      Math.max(
+        scene.width,
+        ...relationships.flatMap((edge) =>
+          edge.labelBounds
+            ? [edge.labelBounds.x + edge.labelBounds.width + 24]
+            : [],
+        ),
+      ),
     ),
+    height: Math.ceil(
+      Math.max(
+        scene.height,
+        ...relationships.flatMap((edge) =>
+          edge.labelBounds
+            ? [edge.labelBounds.y + edge.labelBounds.height + 24]
+            : [],
+        ),
+      ),
+    ),
+    relationships: Object.freeze(relationships),
   });
 }
 

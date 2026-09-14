@@ -123,3 +123,85 @@ test("renders the process fixture in ordinary Mermaid", async ({ page }) => {
     hasPools: true,
   });
 });
+
+for (const direction of ["LR", "TD"]) {
+  test(`process labels remain readable in ${direction} layout`, async ({
+    page,
+  }) => {
+    await page.goto("./");
+    await page.getByRole("button", { name: "Show source" }).click();
+    const input = page.getByLabel("Diagram source");
+    await input.fill(
+      (await input.inputValue()).replace(
+        "flowchart LR",
+        `flowchart ${direction}`,
+      ),
+    );
+    await expect(
+      page.getByText("Preview current", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Hide source" }).click();
+    const collisions = await page
+      .locator("svg[data-manatee-renderer]")
+      .evaluate((svg) => {
+        const labels = [...svg.querySelectorAll("text")];
+        const overlap = (a: DOMRect, b: DOMRect) =>
+          Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
+          Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+        const result: string[] = [];
+        for (let i = 0; i < labels.length; i++)
+          for (let j = i + 1; j < labels.length; j++) {
+            if (
+              overlap(
+                labels[i]!.getBoundingClientRect(),
+                labels[j]!.getBoundingClientRect(),
+              )
+            )
+              result.push(
+                `${labels[i]!.textContent} / ${labels[j]!.textContent}`,
+              );
+          }
+        for (const group of svg.querySelectorAll("g.group")) {
+          const rect = group.querySelector("rect")!.getBoundingClientRect();
+          const text = group.querySelector("text")!.getBoundingClientRect();
+          if (
+            text.left < rect.left ||
+            text.top < rect.top ||
+            text.right > rect.right ||
+            text.bottom > rect.bottom
+          )
+            result.push(
+              `Heading outside ${group.getAttribute("data-element-id")}`,
+            );
+        }
+        for (const path of svg.querySelectorAll<SVGPathElement>(
+          ".relationship > path",
+        )) {
+          const matrix = path.getScreenCTM()!;
+          for (const label of labels) {
+            const box = label.getBoundingClientRect();
+            for (
+              let distance = 0;
+              distance < path.getTotalLength();
+              distance += 2
+            ) {
+              const point = path
+                .getPointAtLength(distance)
+                .matrixTransform(matrix);
+              if (
+                point.x > box.left + 0.5 &&
+                point.x < box.right - 0.5 &&
+                point.y > box.top + 0.5 &&
+                point.y < box.bottom - 0.5
+              ) {
+                result.push(`Connector through ${label.textContent}`);
+                break;
+              }
+            }
+          }
+        }
+        return result;
+      });
+    expect(collisions).toEqual([]);
+  });
+}

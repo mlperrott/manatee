@@ -121,6 +121,66 @@ export function relationshipNotation(
   return choice(relationshipEntry(metadata, relationship));
 }
 
+/** Only task-like nodes can host an interrupting timer. Ordinary Mermaid boxes
+ * remain eligible so choosing a timeout does not require restyling the host. */
+export function canHostBoundaryTimer(
+  model: MermaidSemanticModel,
+  metadata: Readonly<Record<string, unknown>> | undefined,
+  id: string,
+): boolean {
+  const node = model.nodes.find((node) => node.id === id);
+  if (!node) return false;
+  const notation = nodeNotation(metadata, id);
+  return (
+    notation === "task" ||
+    notation === "collapsed-subprocess" ||
+    (!notation &&
+      [
+        "square",
+        "rect",
+        "rectangle",
+        "round",
+        "rounded",
+        "subroutine",
+      ].includes(node.kind))
+  );
+}
+
+function boundaryTimerProblem(
+  model: MermaidSemanticModel,
+  metadata: Readonly<Record<string, unknown>> | undefined,
+  id: string,
+  notation: BoundaryTimerNotation,
+): string | undefined {
+  const host = model.nodes.find((node) => node.id === notation.host);
+  const attachment = model.relationships.find(
+    ({ identity }) =>
+      identity.kind === "authored" && identity.id === notation.attachment,
+  );
+  if (!host)
+    return `Host task ${notation.host} does not exist. Restore it or remove this timeout notation.`;
+  if (host.id === id)
+    return "A timeout cannot attach to itself. Choose another task.";
+  if (!canHostBoundaryTimer(model, metadata, host.id))
+    return `${host.label} is not a task. Choose a task or collapsed subprocess for this timeout.`;
+  if (!attachment)
+    return `Fallback attachment ${notation.attachment} must be an authored Mermaid relationship. Restore it or remove this timeout notation.`;
+  if (attachment.source !== host.id || attachment.target !== id)
+    return `Fallback attachment ${notation.attachment} must connect ${host.id} to ${id}.`;
+  return undefined;
+}
+
+export function attachedBoundaryTimer(
+  model: MermaidSemanticModel,
+  metadata: Readonly<Record<string, unknown>> | undefined,
+  id: string,
+): BoundaryTimerNotation | undefined {
+  const notation = boundaryTimerNotation(metadata, id);
+  return notation && !boundaryTimerProblem(model, metadata, id, notation)
+    ? notation
+    : undefined;
+}
+
 export function notationDiagnostics(
   model: MermaidSemanticModel,
   metadata: Readonly<Record<string, unknown>> | undefined,
@@ -134,44 +194,28 @@ export function notationDiagnostics(
     boundaryTimers.map(({ node, notation }) => [node.id, notation]),
   );
   for (const { node, notation } of boundaryTimers) {
-    const host = model.nodes.find(({ id }) => id === notation.host);
-    const attachment = model.relationships.find(
-      ({ identity }) =>
-        identity.kind === "authored" && identity.id === notation.attachment,
-    );
-    const problem = !host
-      ? `Host task ${notation.host} does not exist.`
-      : host.id === node.id
-        ? "A boundary timer cannot attach to itself."
-        : !attachment
-          ? `Fallback attachment ${notation.attachment} must be an authored Mermaid relationship.`
-          : attachment.source !== host.id || attachment.target !== node.id
-            ? `Fallback attachment ${notation.attachment} must connect ${host.id} to ${node.id}.`
-            : undefined;
-    if (problem) {
+    const problem = boundaryTimerProblem(model, metadata, node.id, notation);
+    if (problem)
       diagnostics.push({
         code: "manatee.notation.boundary-timer-reference",
         message: problem,
         severity: "warning",
         path: `manatee.elements.nodes.${node.id}.notation`,
       });
-    }
-  }
-  for (const { node } of boundaryTimers) {
     const visited = new Set<string>([node.id]);
-    let host = byTimer.get(node.id)?.host;
-    while (host && byTimer.has(host)) {
+    let host = notation.host;
+    while (byTimer.has(host)) {
       if (visited.has(host)) {
         diagnostics.push({
           code: "manatee.notation.boundary-timer-cycle",
-          message: `Boundary timer attachment for ${node.id} forms a cycle.`,
+          message: `Timeout attachments for ${node.label} form a cycle. Attach each timeout to a task instead.`,
           severity: "warning",
           path: `manatee.elements.nodes.${node.id}.notation.host`,
         });
         break;
       }
       visited.add(host);
-      host = byTimer.get(host)?.host;
+      host = byTimer.get(host)!.host;
     }
   }
   return diagnostics;

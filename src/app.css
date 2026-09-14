@@ -768,7 +768,8 @@ button:disabled {
   accent-color: var(--brand);
 }
 
-.inspector input[type="text"] {
+.inspector input[type="text"],
+.inspector select {
   width: 100%;
   padding: 8px 9px;
   border: 1px solid var(--line);
@@ -1020,7 +1021,8 @@ button:disabled {
   .segmented span,
   .recovery-banner button,
   .export-menu__panel button,
-  .export-menu__panel select {
+  .export-menu__panel select,
+  .inspector select {
     min-height: 44px;
   }
   .button {
@@ -1084,7 +1086,8 @@ button:disabled {
   }
   .source-panel textarea,
   .inspector input[type="text"],
-  .export-menu select {
+  .export-menu select,
+  .inspector select {
     font-size: 16px;
   }
   .source-panel textarea {

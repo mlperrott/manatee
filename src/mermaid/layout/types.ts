@@ -64,6 +64,7 @@ export interface LayoutRelationship {
   readonly notation: NotationChoice | undefined;
   readonly label: string;
   readonly points: readonly Point[];
+  readonly labelBounds?: Bounds;
   readonly style: ComputedRelationshipStyle;
 }
 
