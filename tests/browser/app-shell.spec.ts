@@ -78,9 +78,7 @@ test("changes process notation through the Mermaid inspector", async ({
   await expect(page.getByLabel("Process notation")).toHaveValue(
     "boundary-timer",
   );
-  await expect(page.getByLabel("Timeout attachment")).toHaveValue(
-    "timeoutLink",
-  );
+  await expect(page.getByLabel("Timeout task")).toHaveValue("timeoutLink");
 });
 
 test("opens and downloads a portable source document", async ({ page }) => {
@@ -365,4 +363,43 @@ test("reclaims the canvas when panels close and keeps menus keyboard accessible"
   await expect(
     page.getByRole("button", { name: "Download PNG" }),
   ).not.toBeVisible();
+});
+
+test("exports authored appearance without the editor selection highlight", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('[data-element-id="review"]').click();
+  await page.getByLabel("Outline colour").fill("#123456");
+  await page.getByRole("button", { name: "Apply appearance" }).click();
+  await expect(page.locator('[data-element-id="review"]')).toHaveClass(
+    /selected/,
+  );
+  await page.getByText("Export", { exact: true }).click();
+  const pending = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download SVG", exact: true }).click();
+  const svg = await readFile((await (await pending).path())!, "utf8");
+  expect(svg).not.toMatch(/class="[^"]*\bselected\b/);
+  expect(svg).toContain('stroke="#123456"');
+});
+
+test("an invalid newly opened file cannot masquerade as the previous diagram", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await expect(page.locator('[data-element-id="review"]')).toBeVisible();
+  await page.getByLabel("Choose diagram file").setInputFiles({
+    name: "broken.mmd",
+    mimeType: "text/plain",
+    buffer: Buffer.from("flowchart LR\nnew["),
+  });
+  await expect(page.getByLabel("Current document")).toContainText("broken.mmd");
+  await expect(page.locator('[data-element-id="review"]')).toHaveCount(0);
+  await expect(
+    page.getByText("No preview available", { exact: true }),
+  ).toBeVisible();
+  await page.getByText("Export", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Download SVG", exact: true }),
+  ).toBeDisabled();
 });

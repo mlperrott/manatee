@@ -1,3 +1,36 @@
+# Studio architecture and UX follow-up — 14 September 2026
+
+This review follows the single Mermaid document direction in ADR-0002. The architecture remains `DocumentSession → MermaidDocument → scene → SVG`; the corrections below keep source preservation, ordered document operations, browser storage, and one rendering path.
+
+| Review concern | Correction |
+| --- | --- |
+| An invalid newly opened file displayed the previous document as current. | Preview state belongs to its snapshot. A newly opened invalid file has no preview, while invalid edits within a document retain its last valid preview. |
+| Export retained the editor's blue selection outline. | Export renders the same scene without selection options; authored appearance survives SVG and PNG export. |
+| Cyclic timeout attachments could hide all fallback relationships. | Task eligibility and attachment validity are shared by diagnostics, inspector choices, and layout. Invalid commands are rejected atomically; imported invalid references preserve source and fallback relationships while presentation editing/export is guarded. |
+| Pools covered their child lanes. | Containers paint from ancestors to descendants. Explicit SVG rotation keeps pool/lane headings correctly positioned in WebKit as well as Chromium and Firefox. |
+| Styling contradicted chosen process notation. | Process symbols retain solid identifying outlines; sequence and message flows retain their required line and endpoint conventions. Clearing notation restores ordinary Mermaid styling. |
+| Timer anchor movement could not be reset. | Reset layout and per-element automatic position include saved timer anchors and preserve notation, references, and undo/redo. |
+| Movement and layout duplicated coordinate conversion. | A shared content origin governs both saved positions and interactive movement. A regression test verifies nested nodes, lanes, and pools stay in place after save/reopen; it caught and fixed a 28px lane shift. |
+| Starter captions collided with labels and connectors. | Layout reserves process-label and attached-timer space. Routing avoids those captions, relationship labels occupy free space beside routes, and the scene stores their export/preview geometry. |
+| Mobile notation controls missed the earlier touch treatment. | Inspector dropdowns use at least 44px control height and 16px text on phones. |
+| Timeout controls exposed references before explaining their purpose. | The task selector appears only for interrupting timeouts, uses task labels, and explains the timeout behavior. |
+
+## Verification
+
+- `pnpm verify` passes: formatting, lint, dependency boundaries, type checking, 75 unit/integration tests, and the production build.
+- 58 checks against the production build pass across Chromium, Firefox, WebKit, mobile Chromium, and iPhone WebKit emulation. Coverage includes file replacement, source and image export, recovery, inspector actions, viewport containment, and horizontal/vertical label and connector clearance.
+- The existing 100-node/150-relationship render budget and 250ms movement checks passed during the development-browser regression run.
+- WebKit was exercised with temporary user-local copies of its missing host libraries. No system packages were installed and no browser checks were removed.
+- Physical iPhone interactions and slide-application rendering remain outside this automated verification. Fit is an overview; zoom is still needed for dense diagrams on phones.
+
+![Mermaid Studio on desktop](ux/mermaid-desktop.png)
+
+![Mermaid Studio on iPhone](ux/mermaid-iphone.png)
+
+![Timeout inspector on iPhone](ux/mermaid-iphone-inspector.png)
+
+---
+
 # Studio UX review — 13 September 2026
 
 > Historical review of the superseded dual-format release. BPMN XML findings below no longer describe the product; current mobile requirements are in [the release guide](release.md).
