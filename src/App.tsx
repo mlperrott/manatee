@@ -1006,6 +1006,7 @@ export default function App() {
             >
               <MermaidSurface
                 svg={svg()}
+                scene={snapshot()?.scene}
                 width={snapshot()?.scene?.width ?? 1}
                 height={snapshot()?.scene?.height ?? 1}
                 zoom={zoom()}

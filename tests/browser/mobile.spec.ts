@@ -169,6 +169,10 @@ test("opens portable files and reaches process notation and export", async ({
   await page
     .getByLabel("Process notation")
     .selectOption("collapsed-subprocess");
+  await expect(page.locator('[data-element-id="review"]')).toHaveAttribute(
+    "data-notation",
+    "collapsed-subprocess",
+  );
   await page.getByLabel("Fill colour", { exact: true }).fill("#ffccaa");
   await page.getByLabel("Fill colour", { exact: true }).blur();
   await view(page, "Source");
@@ -245,9 +249,16 @@ test("finger drag previews and commits one node move", async ({
   await view(page, "Source");
   await page
     .getByRole("textbox", { name: "Diagram source" })
-    .fill("flowchart LR\n  a[Start] --> b[End]\n");
+    .fill("flowchart LR\n  a[Start] -->|Next| b[Middle]\n  b --> c[End]\n");
   await view(page, "Canvas");
-  const node = page.locator('[data-element-id="a"]');
+  const node = page.locator('[data-element-id="b"]');
+  await expect(node).toBeVisible();
+  const edge = page.locator(".relationship > path:not(.relationship-hit-area)");
+  const hitArea = page.locator(".relationship-hit-area");
+  const label = page.locator(".relationship-label");
+  const originalPaths = await edge.evaluateAll((paths) =>
+    paths.map((path) => path.getAttribute("d")),
+  );
   const box = (await node.boundingBox())!;
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
@@ -261,6 +272,18 @@ test("finger drag previews and commits one node move", async ({
     touchPoints: [{ x: x + 45, y: y + 20 }],
   });
   await expect(node).toHaveAttribute("transform", /translate\(/);
+  const previewPaths = await edge.evaluateAll((paths) =>
+    paths.map((path) => path.getAttribute("d")),
+  );
+  expect(previewPaths).toHaveLength(2);
+  expect(previewPaths[0]).not.toBe(originalPaths[0]);
+  expect(previewPaths[1]).not.toBe(originalPaths[1]);
+  expect(
+    await hitArea.evaluateAll((paths) =>
+      paths.map((path) => path.getAttribute("d")),
+    ),
+  ).toEqual(previewPaths);
+  await expect(label).toHaveAttribute("transform", /translate\(/);
   await client.send("Input.dispatchTouchEvent", {
     type: "touchEnd",
     touchPoints: [],
@@ -271,7 +294,7 @@ test("finger drag previews and commits one node move", async ({
     .click();
   await expect(
     page.getByRole("textbox", { name: "Diagram source" }),
-  ).toHaveValue(/a:\s*\n\s*position:/);
+  ).toHaveValue(/b:\s*\n\s*position:/);
   await page
     .getByRole("navigation", { name: "Workspace views" })
     .getByRole("button", { name: "Canvas" })
@@ -283,7 +306,36 @@ test("finger drag previews and commits one node move", async ({
     .click();
   await expect(
     page.getByRole("textbox", { name: "Diagram source" }),
-  ).not.toHaveValue(/a:\s*\n\s*position:/);
+  ).not.toHaveValue(/b:\s*\n\s*position:/);
+  await page
+    .getByRole("navigation", { name: "Workspace views" })
+    .getByRole("button", { name: "Canvas" })
+    .click();
+  const restoredPaths = await edge.evaluateAll((paths) =>
+    paths.map((path) => path.getAttribute("d")),
+  );
+  const restoredBox = (await node.boundingBox())!;
+  const restoredX = restoredBox.x + restoredBox.width / 2;
+  const restoredY = restoredBox.y + restoredBox.height / 2;
+  await client.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: restoredX, y: restoredY }],
+  });
+  await client.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [{ x: restoredX + 35, y: restoredY + 15 }],
+  });
+  await expect(node).toHaveAttribute("transform", /translate\(/);
+  await client.send("Input.dispatchTouchEvent", {
+    type: "touchCancel",
+    touchPoints: [],
+  });
+  await expect(node).not.toHaveAttribute("transform", /translate\(/);
+  expect(
+    await edge.evaluateAll((paths) =>
+      paths.map((path) => path.getAttribute("d")),
+    ),
+  ).toEqual(restoredPaths);
 });
 
 test("Save preserves the latest text even before the preview updates", async ({
