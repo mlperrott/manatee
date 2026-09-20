@@ -208,6 +208,84 @@ test("cancelled touch drags never move an element", async ({ page }) => {
   ).not.toHaveValue(/position:/);
 });
 
+test("connections have a finger-sized hit area and remain selectable", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await view(page, "Source");
+  await page
+    .getByRole("textbox", { name: "Diagram source" })
+    .fill("flowchart LR\n  a[Start] --> b[End]\n");
+  await view(page, "Canvas");
+  const hitArea = page.locator(".relationship-hit-area");
+  await expect(hitArea).toHaveCount(1);
+  expect(await hitArea.getAttribute("vector-effect")).toBe(
+    "non-scaling-stroke",
+  );
+  const target = await hitArea.evaluate((path: SVGPathElement) => {
+    const point = path.getPointAtLength(path.getTotalLength() / 2);
+    const screen = point.matrixTransform(path.getScreenCTM()!);
+    return { x: screen.x, y: screen.y + 8 };
+  });
+  await page.touchscreen.tap(target.x, target.y);
+  const id = await hitArea.locator("..").getAttribute("data-element-id");
+  expect(await hitArea.evaluate((path) => getComputedStyle(path).stroke)).toBe(
+    "rgba(0, 0, 0, 0)",
+  );
+  await view(page, "Inspector");
+  await expect(page.locator(".selection-summary code")).toHaveText(id!);
+});
+
+test("finger drag previews and commits one node move", async ({
+  page,
+  context,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chromium");
+  await page.goto("./");
+  await view(page, "Source");
+  await page
+    .getByRole("textbox", { name: "Diagram source" })
+    .fill("flowchart LR\n  a[Start] --> b[End]\n");
+  await view(page, "Canvas");
+  const node = page.locator('[data-element-id="a"]');
+  const box = (await node.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  const client = await context.newCDPSession(page);
+  await client.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x, y }],
+  });
+  await client.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [{ x: x + 45, y: y + 20 }],
+  });
+  await expect(node).toHaveAttribute("transform", /translate\(/);
+  await client.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await page
+    .getByRole("navigation", { name: "Workspace views" })
+    .getByRole("button", { name: "Source" })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Diagram source" }),
+  ).toHaveValue(/a:\s*\n\s*position:/);
+  await page
+    .getByRole("navigation", { name: "Workspace views" })
+    .getByRole("button", { name: "Canvas" })
+    .click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Workspace views" })
+    .getByRole("button", { name: "Source" })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Diagram source" }),
+  ).not.toHaveValue(/a:\s*\n\s*position:/);
+});
+
 test("Save preserves the latest text even before the preview updates", async ({
   page,
 }) => {

@@ -656,12 +656,23 @@ button:disabled {
   overflow: visible;
 }
 
-.mermaid-surface [data-element-id] {
+.mermaid-surface .node,
+.mermaid-surface .group {
   cursor: grab;
 }
 
-.mermaid-surface [data-element-id]:active {
+.mermaid-surface .node:active,
+.mermaid-surface .group:active {
   cursor: grabbing;
+}
+
+.mermaid-surface .node,
+.mermaid-surface .node * {
+  touch-action: none;
+}
+
+.mermaid-surface .relationship {
+  cursor: pointer;
 }
 
 .canvas-loading {

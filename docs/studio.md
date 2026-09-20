@@ -32,4 +32,4 @@ Recovery is browser-local. Clearing browser data removes it. File handles are no
 
 ## Desktop and mobile
 
-Desktop provides canvas, inspector and optional source side by side. Phones use Canvas, Source and Inspector views with the same authoring controls. Advanced controls are expandable, gallery navigation is keyboard accessible, and primary touch controls use at least 44 CSS pixels. Dense diagrams still require zooming for detailed reading.
+Desktop provides canvas, inspector and optional source side by side. Phones use Canvas, Source and Inspector views with the same authoring controls. Tap a node or connection to select it; drag a node to move it. Swipe the blank canvas or a connection to scroll, and use the zoom controls for dense diagrams. Advanced controls are expandable, gallery navigation is keyboard accessible, and primary touch controls use at least 44 CSS pixels.

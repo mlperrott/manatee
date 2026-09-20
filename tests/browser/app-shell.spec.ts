@@ -378,6 +378,7 @@ test("exports authored appearance without the editor selection highlight", async
   await page.getByRole("button", { name: "Download SVG", exact: true }).click();
   const svg = await readFile((await (await pending).path())!, "utf8");
   expect(svg).not.toMatch(/class="[^"]*\bselected\b/);
+  expect(svg).not.toContain("relationship-hit-area");
   expect(svg).toContain('stroke="#123456"');
 });
 

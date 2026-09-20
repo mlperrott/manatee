@@ -11,6 +11,7 @@ export interface MermaidSvgOptions {
   readonly selectedElementId?: string;
   readonly outdated?: boolean;
   readonly title?: string;
+  readonly interactive?: boolean;
 }
 
 function escapeText(value: string): string {
@@ -309,7 +310,10 @@ export function renderMermaidSvg(
         messageFlow && start
           ? `<circle cx="${start.x}" cy="${start.y}" r="4" fill="#ffffff" stroke="${color}" stroke-width="1.5"/>`
           : "";
-      return `<g class="relationship${selected}" data-element-id="${escapeAttribute(relationship.id)}"${relationship.notation ? ` data-notation="${relationship.notation}"` : ""}><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">${marker}</marker></defs><path d="${path(relationship.points)}" fill="none" stroke="${color}" stroke-width="${relationship.style.width}"${lineDash}${startMarker}${endMarker}/>${messageStart}${relationship.label ? label(relationship.label, relationship.labelBounds ? { x: relationship.labelBounds.x + relationship.labelBounds.width / 2, y: relationship.labelBounds.y + relationship.labelBounds.height / 2 } : midpoint(relationship.points), relationship.style.text, "relationship-label", 240) : ""}</g>`;
+      const hitArea = options.interactive
+        ? `<path class="relationship-hit-area" d="${path(relationship.points)}" fill="none" stroke="transparent" stroke-width="24" vector-effect="non-scaling-stroke" pointer-events="stroke"/>`
+        : "";
+      return `<g class="relationship${selected}" data-element-id="${escapeAttribute(relationship.id)}"${relationship.notation ? ` data-notation="${relationship.notation}"` : ""}><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">${marker}</marker></defs>${hitArea}<path d="${path(relationship.points)}" fill="none" stroke="${color}" stroke-width="${relationship.style.width}"${lineDash}${startMarker}${endMarker}/>${messageStart}${relationship.label ? label(relationship.label, relationship.labelBounds ? { x: relationship.labelBounds.x + relationship.labelBounds.width / 2, y: relationship.labelBounds.y + relationship.labelBounds.height / 2 } : midpoint(relationship.points), relationship.style.text, "relationship-label", 240) : ""}</g>`;
     })
     .join("");
   const nodes = scene.nodes
@@ -333,7 +337,10 @@ export function renderMermaidSvg(
   const title = options.title
     ? `<title>${escapeText(options.title)}</title>`
     : "";
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,.selected>path{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}</style>${groups}${relationships}${nodes}${outdated}</svg>`;
+  const selectedPath = options.interactive
+    ? ".selected>path:not(.relationship-hit-area)"
+    : ".selected>path";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,${selectedPath}{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}</style>${groups}${relationships}${nodes}${outdated}</svg>`;
 }
 
 export const renderMermaidPreviewSvg = renderMermaidSvg;

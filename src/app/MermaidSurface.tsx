@@ -19,18 +19,37 @@ function elementId(target: EventTarget | null): string | undefined {
     : undefined;
 }
 
+function elementGroup(target: EventTarget | null): SVGElement | undefined {
+  return target instanceof Element
+    ? (target.closest<SVGElement>("[data-element-id]") ?? undefined)
+    : undefined;
+}
+
+function movable(group: SVGElement | undefined): boolean {
+  return Boolean(
+    group?.classList.contains("node") || group?.classList.contains("group"),
+  );
+}
+
 export function MermaidSurface(props: MermaidSurfaceProps) {
   let container: HTMLDivElement | undefined;
   const [size, setSize] = createSignal({ width: 0, height: 0 });
   let drag:
     | {
-        readonly id: string;
+        readonly id: string | undefined;
         readonly x: number;
         readonly y: number;
         readonly pointerId: number;
         readonly touch: boolean;
+        readonly group: SVGElement | undefined;
+        moved: boolean;
       }
     | undefined;
+
+  const clearDrag = () => {
+    drag?.group?.removeAttribute("transform");
+    drag = undefined;
+  };
 
   onSettled(() => {
     if (!container) return;
@@ -74,6 +93,11 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
       onKeyDown={(event) => {
         const id = elementId(event.target) ?? props.selectedElementId;
         if (!id || props.disabled) return;
+        const group = [
+          ...(container?.querySelectorAll<SVGElement>("[data-element-id]") ??
+            []),
+        ].find((item) => item.dataset.elementId === id);
+        if (!movable(group)) return;
         const delta = event.shiftKey ? 20 : 5;
         const direction = {
           ArrowLeft: [-delta, 0],
@@ -87,49 +111,57 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
       }}
       onPointerDown={(event) => {
         if (!event.isPrimary) {
-          drag = undefined;
-          return;
-        }
-        const id = elementId(event.target);
-        if (!id) {
-          props.onSelect(undefined);
+          clearDrag();
           return;
         }
         if (props.disabled || event.button !== 0) return;
+        clearDrag();
+        const group = elementGroup(event.target);
         drag = {
-          id,
+          id: group?.dataset.elementId,
           x: event.clientX,
           y: event.clientY,
           pointerId: event.pointerId,
           touch: event.pointerType === "touch",
+          group:
+            movable(group) &&
+            (event.pointerType !== "touch" || group?.classList.contains("node"))
+              ? group
+              : undefined,
+          moved: false,
         };
-        if (!drag.touch) event.currentTarget.setPointerCapture(event.pointerId);
+        if (group) event.currentTarget.setPointerCapture(event.pointerId);
       }}
-      onPointerCancel={() => {
-        drag = undefined;
+      onPointerMove={(event) => {
+        if (!drag || event.pointerId !== drag.pointerId || !drag.group) return;
+        const dx = event.clientX - drag.x;
+        const dy = event.clientY - drag.y;
+        if (!drag.moved && Math.hypot(dx, dy) < (drag.touch ? 8 : 3)) return;
+        drag.moved = true;
+        drag.group.setAttribute(
+          "transform",
+          `translate(${dx / props.zoom} ${dy / props.zoom})`,
+        );
       }}
-      onLostPointerCapture={() => {
-        drag = undefined;
+      onPointerCancel={(event) => {
+        if (drag?.pointerId === event.pointerId) clearDrag();
+      }}
+      onLostPointerCapture={(event) => {
+        if (drag?.pointerId === event.pointerId) clearDrag();
       }}
       onPointerUp={(event) => {
         if (!drag || event.pointerId !== drag.pointerId) return;
-        const { id, x, y, touch } = drag;
-        drag = undefined;
+        const { id, x, y, touch, group } = drag;
+        const dx = event.clientX - x;
+        const dy = event.clientY - y;
+        const moved = Math.hypot(dx, dy) >= (touch ? 8 : 3);
+        clearDrag();
         if (event.currentTarget.hasPointerCapture(event.pointerId))
           event.currentTarget.releasePointerCapture(event.pointerId);
-        // Touch gestures belong to native scrolling and page zoom. Only a tap
-        // selects; explicit inspector controls perform precise mobile moves.
-        if (
-          touch &&
-          Math.abs(event.clientX - x) + Math.abs(event.clientY - y) > 8
-        )
-          return;
-        const dx = (event.clientX - x) / props.zoom;
-        const dy = (event.clientY - y) / props.zoom;
+        if (moved && !group) return;
         props.onSelect(id);
-        if (!touch && Math.abs(dx) + Math.abs(dy) > 2) {
-          props.onNudge(id, dx, dy);
-        }
+        if (moved && group && id)
+          props.onNudge(id, dx / props.zoom, dy / props.zoom);
       }}
     >
       <div
