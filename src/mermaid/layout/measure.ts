@@ -53,8 +53,9 @@ export function nodeSize(
   label: string,
   kind: string,
   notation?: NotationChoice,
+  fontSize = 15,
 ): Pick<Bounds, "width" | "height"> {
-  const measured = measureLabel(label);
+  const measured = measureLabel(label, fontSize);
   if (notation === "boundary-timer") return { width: 44, height: 44 };
   if (
     notation === "start-event" ||

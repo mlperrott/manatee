@@ -40,8 +40,37 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function labelText(value: unknown): string {
+  // Mermaid protects authored entities during parsing. Normalize these before
+  // exposing labels to the visual editor or the SVG renderer.
+  return text(value)
+    .replace(/ﬂ°°/gu, "&#")
+    .replace(/ﬂ°/gu, "&")
+    .replace(/¶ß/gu, ";")
+    .replace(/&(#\d+|quot|apos|amp|lt|gt|nbsp);/gu, (entity, name: string) => {
+      if (name.startsWith("#")) {
+        const code = Number(name.slice(1));
+        return code > 0 && code <= 0x10ffff
+          ? String.fromCodePoint(code)
+          : entity;
+      }
+      return (
+        (
+          {
+            quot: '"',
+            apos: "'",
+            amp: "&",
+            lt: "<",
+            gt: ">",
+            nbsp: " ",
+          } as Record<string, string>
+        )[name] ?? entity
+      );
+    });
+}
+
 function nestedText(value: { readonly text?: unknown } | undefined): string {
-  return text(value?.text);
+  return labelText(value?.text);
 }
 
 function direction(value: unknown): DiagramDirection | undefined {
@@ -223,7 +252,7 @@ export function normalizeFlowDatabase(
       );
       return {
         id,
-        label: text(raw.text) || id,
+        label: labelText(raw.text) || id,
         kind: text(raw.type) || "rectangle",
         parentId: parents.get(id),
         classes: Object.freeze(strings(raw.classes)),
@@ -236,7 +265,7 @@ export function normalizeFlowDatabase(
     const id = text(raw.id);
     return {
       id,
-      label: text(raw.title) || id,
+      label: labelText(raw.title) || id,
       kind: family === "swimlane" ? "lane" : "subgraph",
       parentId: parents.get(id),
       direction: direction(raw.dir),
@@ -274,7 +303,7 @@ export function normalizeFlowDatabase(
       source: text(edge.start),
       target: text(edge.end),
       kind,
-      label: text(edge.text),
+      label: labelText(edge.text),
       technology: undefined,
       description: undefined,
       directionHint: undefined,

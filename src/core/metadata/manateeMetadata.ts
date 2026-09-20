@@ -456,7 +456,10 @@ export function patchManateeMetadata(
   } else if (yaml.kind === "parsed") {
     const originalPair = manateePair(yaml.parsed.yamlDocument);
     if (!originalPair) {
-      yaml.parsed.yamlDocument.set("manatee", { version: 1 });
+      yaml.parsed.yamlDocument.set(
+        "manatee",
+        yaml.parsed.yamlDocument.createNode({ version: 1 }),
+      );
       applyMetadataEdits(yaml.parsed.yamlDocument, edits);
       const fragment = renderedManateePair(yaml.parsed.yamlDocument).replaceAll(
         "\n",

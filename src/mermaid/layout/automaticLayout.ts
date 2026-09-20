@@ -115,23 +115,38 @@ function elkDirection(direction: string): string {
   return "RIGHT";
 }
 
+function displayLabel(item: {
+  readonly label: string;
+  readonly technology?: string | undefined;
+  readonly description?: string | undefined;
+}): string {
+  return [
+    item.label,
+    item.technology ? `[${item.technology}]` : undefined,
+    item.description,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function layoutNode(
   model: MermaidSemanticModel,
   node: MermaidNode,
   metadata: Readonly<Record<string, unknown>> | undefined,
 ): LayoutNode {
   const notation = nodeNotation(metadata, node.id);
+  const style = computedNodeStyle(model, node, metadata);
   return {
     id: node.id,
-    label: node.label,
+    label: displayLabel(node),
     kind: node.kind,
     notation,
     parentId: node.parentId,
     manual: false,
     x: 0,
     y: 0,
-    ...nodeSize(node.label, node.kind, notation),
-    style: computedNodeStyle(model, node, metadata),
+    ...nodeSize(displayLabel(node), node.kind, notation, style.text.size),
+    style,
   };
 }
 
@@ -567,7 +582,7 @@ export async function computeMermaidScene(
   const laidOutNodes = resolveAutomaticCollisions(
     model.nodes.map((node) => ({
       id: node.id,
-      label: node.label,
+      label: displayLabel(node),
       kind: node.kind,
       notation: nodeNotation(metadata, node.id),
       parentId: node.parentId,
@@ -657,7 +672,7 @@ export async function computeMermaidScene(
           target: relationship.target,
           kind: relationship.kind,
           notation: relationshipNotation(metadata, relationship),
-          label: relationship.label,
+          label: displayLabel(relationship),
           points: Object.freeze(route(source, target, obstacles)),
           style: computedRelationshipStyle(
             relationshipMetadata(relationship, metadata),

@@ -1,3 +1,5 @@
+import { changesMermaid } from "./editScope";
+import { editStructure } from "./authoring";
 import {
   CommandUnavailableError,
   type CommandResult,
@@ -33,6 +35,7 @@ import type { MermaidSemanticModel } from "./model";
 import { parseMermaidDiagram } from "./runtimeContract";
 
 export interface MermaidDocumentSnapshot {
+  readonly sourceEditing?: boolean;
   readonly source: string;
   readonly model: MermaidSemanticModel | undefined;
   readonly metadata: Readonly<Record<string, unknown>> | undefined;
@@ -187,6 +190,7 @@ export class MermaidDocument {
   readonly #layout: MermaidLayout;
   #current: MermaidDocumentSnapshot | undefined;
   #initialSource = "";
+  #sourceEditing = true;
   #undo: HistoryEntry[] = [];
   #redo: HistoryEntry[] = [];
 
@@ -207,6 +211,33 @@ export class MermaidDocument {
     command: DocumentCommand,
   ): Promise<CommandResult<MermaidDocumentSnapshot>> {
     switch (command.type) {
+      case "set-source-editing": {
+        this.#sourceEditing = command.allowed;
+        return {
+          snapshot: await this.#present(
+            this.snapshot(),
+            this.snapshot().model,
+            false,
+          ),
+          patches: [],
+        };
+      }
+      case "edit-structure": {
+        if (!this.#sourceEditing)
+          throw new Error(
+            "Enable Allow Mermaid source edits to change diagram structure.",
+          );
+        const current = this.snapshot();
+        if (!current.valid || !current.commands.visualEditing || !current.model)
+          throw new Error("Fix source errors before editing structure.");
+        const source = editStructure(
+          current.source,
+          current.model,
+          command.edit,
+        );
+        const patch = minimalSourcePatch(current.source, source);
+        return await this.#commitSource(source, patch ? [patch] : [], true);
+      }
       case "select": {
         const current = this.snapshot();
         const snapshot = await this.#present(
@@ -248,6 +279,17 @@ export class MermaidDocument {
   ): Promise<CommandResult<MermaidDocumentSnapshot>> {
     this.#requireAvailable(command);
     switch (command.type) {
+      case "edit-metadata": {
+        const patched = patchManateeMetadata(
+          this.snapshot().source,
+          command.edits,
+        );
+        if (patched.state !== "valid" && patched.state !== "absent")
+          throw new Error(
+            patched.diagnostics[0]?.message ?? "Invalid presentation settings.",
+          );
+        return await this.#edit(command.edits);
+      }
       case "move":
         return await this.#move(command);
       case "set-appearance":
@@ -541,6 +583,10 @@ export class MermaidDocument {
     preparedScene?: MermaidScene,
   ): Promise<CommandResult<MermaidDocumentSnapshot>> {
     const before = this.snapshot();
+    if (!this.#sourceEditing && changesMermaid(before.source, source))
+      throw new Error(
+        "Enable Allow Mermaid source edits to change text outside Manatee metadata.",
+      );
     if (source === before.source) return { snapshot: before, patches: [] };
     const parsed = await parseDocument(source);
     if (requireValid && (!parsed.valid || !parsed.visualEditing)) {
@@ -591,8 +637,17 @@ export class MermaidDocument {
     to: HistoryEntry[],
     target: "before" | "after",
   ): Promise<CommandResult<MermaidDocumentSnapshot>> {
-    const entry = from.pop();
+    const entry = from.at(-1);
+    if (
+      entry &&
+      !this.#sourceEditing &&
+      changesMermaid(this.snapshot().source, entry[target].source)
+    )
+      throw new Error(
+        "Enable Allow Mermaid source edits to undo or redo a structure change.",
+      );
     if (!entry) return { snapshot: this.snapshot(), patches: [] };
+    from.pop();
     const current = this.snapshot();
     to.push(entry);
     const snapshot = await this.#present(
@@ -904,6 +959,7 @@ export class MermaidDocument {
         "Presentation editing is unavailable until the source is valid.";
       const unavailable = disabled(reason);
       return presentationAvailability({
+        "edit-metadata": unavailable,
         move: unavailable,
         "set-appearance": unavailable,
         "set-notation": unavailable,
@@ -942,6 +998,7 @@ export class MermaidDocument {
             "anchor",
           ]) !== undefined));
     return presentationAvailability({
+      "edit-metadata": available,
       move: node || group ? available : selectReason,
       "set-appearance":
         relationship?.identity.kind === "ambiguous"
@@ -992,6 +1049,7 @@ export class MermaidDocument {
     }
     const provisional: MermaidDocumentSnapshot = Object.freeze({
       ...snapshot,
+      sourceEditing: this.#sourceEditing,
       ...(scene ? { scene } : {}),
     });
     const label = selectedLabel(provisional);
@@ -1008,6 +1066,20 @@ export class MermaidDocument {
       ...withSelection,
       commands: Object.freeze({
         ...withSelection.commands,
+        undo:
+          this.#undo.length > 0 &&
+          (this.#sourceEditing ||
+            !changesMermaid(
+              withSelection.source,
+              this.#undo.at(-1)!.before.source,
+            )),
+        redo:
+          this.#redo.length > 0 &&
+          (this.#sourceEditing ||
+            !changesMermaid(
+              withSelection.source,
+              this.#redo.at(-1)!.after.source,
+            )),
         presentation: this.#availability(),
       }),
     });

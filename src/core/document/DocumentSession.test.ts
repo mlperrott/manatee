@@ -35,6 +35,7 @@ function snapshot(source: string): MermaidDocumentSnapshot {
       undo: false,
       redo: false,
       presentation: {
+        "edit-metadata": { state: "inapplicable" },
         move: { state: "inapplicable" },
         "set-appearance": { state: "inapplicable" },
         "set-notation": { state: "inapplicable" },

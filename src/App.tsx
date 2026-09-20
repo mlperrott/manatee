@@ -17,7 +17,16 @@ import type {
   NotationChoice,
   PresentationCommandType,
 } from "./core/document/commands";
-import { DocumentSession } from "./core/document/DocumentSession";
+import { DocumentWorkspace } from "./core/document/DocumentWorkspace";
+import { PresentationPanel } from "./app/studio/PresentationPanel";
+import { StructurePanel } from "./app/studio/StructurePanel";
+import { ExamplesGallery } from "./app/studio/ExamplesGallery";
+import {
+  studioExamples,
+  newDocumentSources,
+  type StudioExample,
+} from "./app/studio/examples";
+import type { MermaidFamily } from "./mermaid/model";
 import {
   copyPngOrDownload,
   downloadBlob,
@@ -69,12 +78,10 @@ function notationOptions(
   if (model.nodes.some((item) => item.id === id)) return nodeNotations;
   const group = model.groups.find((item) => item.id === id);
   if (group)
-    return group.kind === "lane"
-      ? [["lane", "Lane"]]
-      : [
-          ["pool", "Pool"],
-          ["lane", "Lane"],
-        ];
+    return [
+      ["pool", "Pool"],
+      ["lane", "Lane"],
+    ];
   return model.relationships.some((item) => item.id === id)
     ? [
         ["sequence-flow", "Sequence flow"],
@@ -129,10 +136,7 @@ export default function App() {
   const [zoom, setZoom] = createSignal(1);
   const [fitView, setFitView] = createSignal(true);
   const [mobileView, setMobileView] = createSignal("canvas");
-  const [fill, setFill] = createSignal("#e0f0ec");
-  const [stroke, setStroke] = createSignal("#2d817c");
-  const [attributeName, setAttributeName] = createSignal("owner");
-  const [attributeValue, setAttributeValue] = createSignal("operations");
+  const [galleryOpen, setGalleryOpen] = createSignal(false);
   const [boundaryAttachmentDraft, setBoundaryAttachmentDraft] =
     createSignal("");
   const [pngScale, setPngScale] = createSignal(2);
@@ -144,9 +148,9 @@ export default function App() {
   const repository = new IndexedDbDocumentRepository();
   let stage: HTMLElement | undefined;
   let fileInput: HTMLInputElement | undefined;
-  let fileHandle: FileSystemFileHandle | undefined;
+  const fileHandles = new Map<string, FileSystemFileHandle>();
 
-  const documentSession = new DocumentSession({
+  const documentSession = new DocumentWorkspace({
     createDocument: () => new MermaidDocument(),
     store: repository,
     initialFilename: "request-flow.mmd",
@@ -156,6 +160,20 @@ export default function App() {
     documentSession.state(),
   );
   const unsubscribeDocument = documentSession.subscribe(setDocumentState);
+  const tabs = createMemo(() => {
+    documentState();
+    return documentSession.tabs();
+  });
+  const activeId = createMemo(() => {
+    documentState();
+    return documentSession.activeId();
+  });
+  const currentExample = createMemo(() => {
+    documentState();
+    return studioExamples.find(
+      (example) => example.id === documentSession.activeTab()?.exampleId,
+    );
+  });
   const snapshot = createMemo(() => documentState().snapshot);
   const source = createMemo(() => documentState().source);
   const filename = createMemo(() => documentState().filename);
@@ -195,6 +213,11 @@ export default function App() {
   const execute = (command: DocumentCommand) =>
     documentSession.execute(command);
 
+  const executeStudio = async (command: DocumentCommand) => {
+    await execute(command);
+    return documentSession.state().status.kind !== "error";
+  };
+
   const action = (type: PresentationCommandType) =>
     snapshot()?.commands.presentation[type] ??
     ({ state: "inapplicable" } as const);
@@ -207,32 +230,64 @@ export default function App() {
   const applicable = (type: PresentationCommandType): boolean =>
     action(type).state !== "inapplicable";
 
-  const openMermaid = async () => {
+  const resetView = () => {
     setZoom(1);
     setFitView(true);
     setMobileView("canvas");
-    fileHandle = undefined;
-    await documentSession.open({
-      filename: "request-flow.mmd",
-      source: exampleSource,
-    });
   };
-
-  const openFile = async (file: File) => {
-    setZoom(1);
-    setFitView(true);
-    setMobileView("canvas");
+  const openExample = async (example: StudioExample) => {
+    resetView();
+    setGalleryOpen(false);
+    const portrait = Math.min(window.innerWidth, window.screen.width) <= 600;
     await documentSession.open(
-      file.text().then((documentSource) => {
-        if (/^\s*<\?xml|<(?:\w+:)?definitions\b/u.test(documentSource)) {
-          throw new Error(
-            "BPMN XML is no longer supported. Open a Mermaid document instead.",
-          );
-        }
-        return { filename: file.name, source: documentSource };
-      }),
-      `Opening ${file.name}…`,
+      {
+        filename: `${example.id}.mmd`,
+        source: portrait
+          ? example.source.replace(/(flowchart|swimlane-beta) LR/u, "$1 TD")
+          : example.source,
+      },
+      true,
+      example.id,
     );
+  };
+  const openMermaid = () =>
+    openExample(studioExamples.find((example) => example.id === "process")!);
+  const openFile = async (file: File, handle?: FileSystemFileHandle) => {
+    try {
+      const documentSource = await file.text();
+      if (/^\s*<\?xml|<(?:\w+:)?definitions\b/u.test(documentSource))
+        throw new Error(
+          "BPMN XML is no longer supported. Open a Mermaid document instead.",
+        );
+      resetView();
+      const id = await documentSession.open(
+        { filename: file.name, source: documentSource },
+        false,
+      );
+      if (handle) fileHandles.set(id, handle);
+    } catch (error) {
+      fail(error);
+    }
+  };
+  const newDocument = async (family: MermaidFamily) => {
+    resetView();
+    await documentSession.open(
+      {
+        filename: `untitled-${family}.mmd`,
+        source: newDocumentSources[family],
+      },
+      true,
+    );
+  };
+  const closeDocument = (id: string) => {
+    if (
+      documentSession.dirty(id) &&
+      !window.confirm("Close this document and discard its unsaved changes?")
+    )
+      return;
+    documentSession.close(id);
+    fileHandles.delete(id);
+    resetView();
   };
 
   const chooseFile = async () => {
@@ -260,8 +315,7 @@ export default function App() {
         ],
       });
       if (!handle) return;
-      fileHandle = handle;
-      await openFile(await handle.getFile());
+      await openFile(await handle.getFile(), handle);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       fail(error);
@@ -271,19 +325,23 @@ export default function App() {
   const savePortableDocument = async () => {
     const current = snapshot();
     if (!current) return;
+    const id = activeId();
+    const savedSource = source();
+    const fileHandle = fileHandles.get(id);
     try {
       if (fileHandle?.createWritable) {
         const writable = await fileHandle.createWritable();
-        await writable.write(source());
+        await writable.write(savedSource);
         await writable.close();
         setExportMessage("Document saved to its original file.");
       } else {
         downloadBlob(
-          new Blob([source()], { type: "text/plain;charset=utf-8" }),
+          new Blob([savedSource], { type: "text/plain;charset=utf-8" }),
           filename(),
         );
         setExportMessage("Portable document downloaded.");
       }
+      documentSession.markSaved(id, savedSource);
     } catch (error) {
       fail(error);
     }
@@ -348,17 +406,6 @@ export default function App() {
     }
   };
 
-  const styleSelection = async () => {
-    const current = snapshot();
-    const id = current?.selectedElementId;
-    if (!current || !id) return;
-    await execute({
-      type: "set-appearance",
-      elementId: id,
-      appearance: { fill: fill(), stroke: stroke() },
-    });
-  };
-
   onSettled(() => {
     void documentSession
       .initialize({
@@ -390,6 +437,13 @@ export default function App() {
         }
       }
     };
+    const protectUnsaved = (event: BeforeUnloadEvent) => {
+      if (documentSession.tabs().some((tab) => documentSession.dirty(tab.id))) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", protectUnsaved);
     const viewport = window.visualViewport;
     const resizeViewport = () => {
       if (viewport?.scale === 1)
@@ -403,6 +457,7 @@ export default function App() {
     document.addEventListener("pointerdown", dismissMenus);
     document.addEventListener("keydown", dismissMenus);
     return () => {
+      window.removeEventListener("beforeunload", protectUnsaved);
       viewport?.removeEventListener("resize", resizeViewport);
       document.documentElement.style.removeProperty("--app-height");
       document.removeEventListener("pointerdown", dismissMenus);
@@ -439,8 +494,13 @@ export default function App() {
           <span class="document-title__filename" title={filename()}>
             {filename()}
           </span>
-          <Show when={snapshot()?.dirty}>
-            <span class="dirty-badge">Edited</span>
+          <Show
+            when={
+              tabs().find((tab) => tab.id === activeId())?.source !==
+              tabs().find((tab) => tab.id === activeId())?.savedSource
+            }
+          >
+            <span class="dirty-badge">Unsaved</span>
           </Show>
         </div>
         <nav class="topbar__actions" aria-label="Document actions">
@@ -456,7 +516,6 @@ export default function App() {
             onChange={(event) => {
               const file = event.currentTarget.files?.[0];
               if (file) {
-                fileHandle = undefined;
                 void openFile(file);
               }
               event.currentTarget.value = "";
@@ -479,6 +538,7 @@ export default function App() {
           <button
             class="button button--quiet"
             type="button"
+            disabled={!snapshot()}
             onClick={() => void savePortableDocument()}
           >
             Save
@@ -544,6 +604,9 @@ export default function App() {
                 event.currentTarget.closest("details")?.removeAttribute("open");
               }}
             >
+              <button type="button" onClick={() => setGalleryOpen(true)}>
+                Browse examples
+              </button>
               <button type="button" onClick={() => void openMermaid()}>
                 Process example
               </button>
@@ -564,6 +627,112 @@ export default function App() {
           </button>
         </nav>
       </header>
+      <div class="document-workspace-bar">
+        <div class="document-tabs" role="tablist" aria-label="Open documents">
+          {tabs().map((tab) => (
+            <div class="document-tab" data-active={tab.id === activeId()}>
+              <button
+                type="button"
+                role="tab"
+                id={`document-tab-${tab.id}`}
+                tabindex={tab.id === activeId() ? 0 : -1}
+                aria-controls="workspace"
+                onKeyDown={(event) => {
+                  if (
+                    !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                      event.key,
+                    )
+                  )
+                    return;
+                  event.preventDefault();
+                  const list = tabs();
+                  const index = list.findIndex((item) => item.id === tab.id);
+                  const nextIndex =
+                    event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? list.length - 1
+                        : (index +
+                            (event.key === "ArrowRight" ? 1 : -1) +
+                            list.length) %
+                          list.length;
+                  const next = list[nextIndex]!;
+                  documentSession.select(next.id);
+                  resetView();
+                  requestAnimationFrame(() =>
+                    document.getElementById(`document-tab-${next.id}`)?.focus(),
+                  );
+                }}
+                aria-selected={tab.id === activeId() ? "true" : "false"}
+                onClick={() => {
+                  documentSession.select(tab.id);
+                  resetView();
+                }}
+              >
+                {tab.filename}
+                {tab.source !== tab.savedSource ? " •" : ""}
+              </button>
+              <button
+                type="button"
+                aria-label={`Close ${tab.filename}`}
+                disabled={tabs().length === 1}
+                onClick={() => closeDocument(tab.id)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        <details class="export-menu new-document-menu">
+          <summary class="button">New</summary>
+          <div
+            class="export-menu__panel"
+            onClick={(event) =>
+              event.currentTarget.closest("details")?.removeAttribute("open")
+            }
+          >
+            {(
+              [
+                ["flowchart", "Flowchart"],
+                ["swimlane", "Swimlane"],
+                ["c4-context", "C4 context"],
+                ["c4-container", "C4 container"],
+              ] as const
+            ).map(([family, label]) => (
+              <button type="button" onClick={() => void newDocument(family)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </details>
+        <button
+          class="button"
+          type="button"
+          onClick={() => setGalleryOpen(true)}
+        >
+          Example gallery
+        </button>
+      </div>
+      <Show when={galleryOpen()}>
+        <ExamplesGallery
+          open={(example) => void openExample(example)}
+          close={() => setGalleryOpen(false)}
+        />
+      </Show>
+      <Show when={currentExample()}>
+        {(example) => (
+          <details class="example-guide">
+            <summary>About this example: {example().title}</summary>
+            <p>{example().notice}</p>
+            <strong>Try it</strong>
+            <ul>
+              {example().try.map((suggestion) => (
+                <li>{suggestion}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </Show>
       <Show when={exportMessage()}>
         <div class="action-feedback">
           <span role="status">{exportMessage()}</span>
@@ -660,9 +829,29 @@ export default function App() {
               </span>
               <span class="file-badge">MERMAID</span>
             </div>
+            <Show when={snapshot()?.sourceEditing === false}>
+              <p class="source-scope-notice">
+                Mermaid source is protected. Presentation controls remain
+                available.{" "}
+                <button
+                  type="button"
+                  onClick={() =>
+                    void execute({ type: "set-source-editing", allowed: true })
+                  }
+                >
+                  Enable Mermaid editing
+                </button>
+              </p>
+            </Show>
             <textarea
               aria-label="Diagram source"
               disabled={!snapshot()}
+              readonly={snapshot()?.sourceEditing === false}
+              title={
+                snapshot()?.sourceEditing === false
+                  ? "Presentation-only mode. Enable Mermaid source edits in the inspector to edit this text."
+                  : undefined
+              }
               value={source()}
               spellcheck={false}
               autocapitalize="off"
@@ -832,7 +1021,11 @@ export default function App() {
                       ? "Check presentation settings"
                       : "Canvas current"}
             </span>
-            <span>Mermaid</span>
+            <span title="Recovery is stored in this browser; Save writes a portable file.">
+              {documentState().workspaceSaving
+                ? "Saving recovery…"
+                : "Recovery saved"}
+            </span>
           </div>
         </section>
         <Show
@@ -874,6 +1067,35 @@ export default function App() {
                 ×
               </button>
             </div>
+            <Show when={activeId()} keyed>
+              {(_id) => (
+                <Show when={snapshot()}>
+                  {(readSnapshot) => (
+                    <>
+                      <details class="document-settings">
+                        <summary>Document settings</summary>
+                        <label class="document-name-field">
+                          Document name
+                          <input
+                            aria-label="Document name"
+                            value={filename()}
+                            onChange={(event) => {
+                              if (event.currentTarget.value !== filename())
+                                fileHandles.delete(activeId());
+                              documentSession.rename(event.currentTarget.value);
+                            }}
+                          />
+                        </label>
+                      </details>
+                      <StructurePanel
+                        snapshot={readSnapshot()}
+                        execute={executeStudio}
+                      />
+                    </>
+                  )}
+                </Show>
+              )}
+            </Show>
             <Show
               when={snapshot()?.selectedElementId}
               fallback={
@@ -1012,8 +1234,9 @@ export default function App() {
                     }
                   >
                     <p class="field-help">
-                      To use an interrupting timeout, connect an existing task
-                      to this timer in Source with a named connection.
+                      For an interrupting timeout, use Create and edit structure
+                      to add a named connection from the host task to this
+                      element, then choose Interrupting timeout.
                     </p>
                   </Show>
                 </fieldset>
@@ -1049,177 +1272,18 @@ export default function App() {
                   </div>
                 </fieldset>
               </Show>
-              <fieldset
-                disabled={action("set-appearance").state !== "available"}
-                title={actionTitle("set-appearance")}
-              >
-                <legend>Appearance</legend>
-                <label>
-                  Fill{" "}
-                  <input
-                    aria-label="Fill colour"
-                    type="color"
-                    value={fill()}
-                    onInput={(event) => setFill(event.currentTarget.value)}
-                  />
-                </label>
-                <label>
-                  Outline{" "}
-                  <input
-                    aria-label="Outline colour"
-                    type="color"
-                    value={stroke()}
-                    onInput={(event) => setStroke(event.currentTarget.value)}
-                  />
-                </label>
-                <button
-                  class="button button--secondary"
-                  type="button"
-                  onClick={() => void styleSelection()}
-                >
-                  Apply appearance
-                </button>
-              </fieldset>
-              <Show
-                when={
-                  applicable("set-attribute") ||
-                  applicable("create-styling-rule")
-                }
-              >
-                <fieldset
-                  disabled={
-                    action("set-attribute").state !== "available" &&
-                    action("create-styling-rule").state !== "available"
-                  }
-                >
-                  <legend>Attributes & rules</legend>
-                  <label>
-                    Attribute name{" "}
-                    <input
-                      type="text"
-                      value={attributeName()}
-                      onInput={(event) =>
-                        setAttributeName(event.currentTarget.value)
-                      }
+            </Show>
+            <Show when={activeId()} keyed>
+              {(_id) => (
+                <Show when={snapshot()}>
+                  {(readSnapshot) => (
+                    <PresentationPanel
+                      snapshot={readSnapshot()}
+                      execute={executeStudio}
                     />
-                  </label>
-                  <label>
-                    Attribute value{" "}
-                    <input
-                      type="text"
-                      value={attributeValue()}
-                      onInput={(event) =>
-                        setAttributeValue(event.currentTarget.value)
-                      }
-                    />
-                  </label>
-                  <button
-                    class="button button--secondary"
-                    type="button"
-                    onClick={() => {
-                      const id = snapshot()?.selectedElementId;
-                      if (id && attributeName())
-                        void execute({
-                          type: "set-attribute",
-                          elementId: id,
-                          name: attributeName(),
-                          value: attributeValue(),
-                        });
-                    }}
-                    disabled={action("set-attribute").state !== "available"}
-                    title={actionTitle("set-attribute")}
-                  >
-                    Set attribute
-                  </button>
-                  <button
-                    class="button button--quiet-dark"
-                    type="button"
-                    onClick={() => {
-                      const name = attributeName();
-                      if (name)
-                        void execute({
-                          type: "create-styling-rule",
-                          attribute: name,
-                          value: attributeValue(),
-                          appearance: { fill: fill(), stroke: stroke() },
-                        });
-                    }}
-                    disabled={
-                      action("create-styling-rule").state !== "available"
-                    }
-                    title={actionTitle("create-styling-rule")}
-                  >
-                    Create matching rule
-                  </button>
-                </fieldset>
-                <fieldset>
-                  <legend>Layout settings</legend>
-                  <label>
-                    Node spacing{" "}
-                    <input
-                      type="range"
-                      min="24"
-                      max="96"
-                      value="48"
-                      onChange={(event) =>
-                        void execute({
-                          type: "set-spacing",
-                          spacing: "node",
-                          value: Number(event.currentTarget.value),
-                        })
-                      }
-                      disabled={action("set-spacing").state !== "available"}
-                      title={actionTitle("set-spacing")}
-                    />
-                  </label>
-                  <label>
-                    Layer spacing{" "}
-                    <input
-                      type="range"
-                      min="32"
-                      max="128"
-                      value="72"
-                      onChange={(event) =>
-                        void execute({
-                          type: "set-spacing",
-                          spacing: "layer",
-                          value: Number(event.currentTarget.value),
-                        })
-                      }
-                      disabled={action("set-spacing").state !== "available"}
-                      title={actionTitle("set-spacing")}
-                    />
-                  </label>
-                  <button
-                    class="button button--secondary"
-                    type="button"
-                    onClick={() => {
-                      const elementId = snapshot()?.selectedElementId;
-                      if (elementId) {
-                        void execute({
-                          type: "use-automatic-position",
-                          elementId,
-                        });
-                      }
-                    }}
-                    disabled={
-                      action("use-automatic-position").state !== "available"
-                    }
-                    title={actionTitle("use-automatic-position")}
-                  >
-                    Use automatic position
-                  </button>
-                  <button
-                    class="button button--quiet-dark"
-                    type="button"
-                    onClick={() => void execute({ type: "cleanup-unmatched" })}
-                    disabled={action("cleanup-unmatched").state !== "available"}
-                    title={actionTitle("cleanup-unmatched")}
-                  >
-                    Clean up unused settings
-                  </button>
-                </fieldset>
-              </Show>
+                  )}
+                </Show>
+              )}
             </Show>
           </aside>
         </Show>

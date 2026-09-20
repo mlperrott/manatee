@@ -1,3 +1,4 @@
+import { changesMermaid } from "../../mermaid/editScope";
 import type { MermaidDocumentSnapshot } from "../../mermaid/MermaidDocument";
 import type { DocumentCommand } from "./commands";
 
@@ -36,6 +37,8 @@ export type DocumentSessionStatus =
   | { readonly kind: "error"; readonly message: string };
 
 export interface DocumentSessionState {
+  readonly workspaceSaving?: boolean;
+  readonly workspaceSaveFailed?: boolean;
   readonly filename: string;
   readonly source: string;
   readonly snapshot: MermaidDocumentSnapshot | undefined;
@@ -224,6 +227,17 @@ export class DocumentSession implements Disposable {
   }
 
   editSource(source: string): void {
+    if (
+      this.#state.snapshot?.sourceEditing === false &&
+      changesMermaid(this.#state.source, source)
+    ) {
+      this.reportError(
+        new Error(
+          "Enable Allow Mermaid source edits to change text outside Manatee metadata.",
+        ),
+      );
+      return;
+    }
     const active = this.#active;
     if (!active) return;
     const revision = this.#beginOperation();
@@ -274,6 +288,11 @@ export class DocumentSession implements Disposable {
     } catch (error) {
       if (this.#isCurrent(revision)) this.reportError(error);
     }
+  }
+
+  rename(filename: string): void {
+    this.#update({ filename });
+    this.#saveCurrentState();
   }
 
   reportError(error: unknown): void {

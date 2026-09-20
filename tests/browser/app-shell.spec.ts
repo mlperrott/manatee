@@ -24,8 +24,8 @@ test("edits a Mermaid document through source, keyboard, and inspector", async (
       .getByRole("complementary", { name: "Inspector" })
       .getByText("Request received", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Fill colour").fill("#ffccaa");
-  await page.getByRole("button", { name: "Apply appearance" }).click();
+  await page.getByLabel("Fill colour", { exact: true }).fill("#ffccaa");
+  await page.getByLabel("Fill colour", { exact: true }).blur();
 
   await page.getByRole("button", { name: "Show source" }).click();
   const source = page.getByRole("textbox", { name: "Diagram source" });
@@ -120,9 +120,8 @@ test("recovers invalid autosave with its last valid preview", async ({
 
   await page.reload();
   await expect(
-    page.getByRole("region", { name: "Autosave recovery" }),
+    page.getByRole("tab", { name: "request-flow.mmd •", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Recover" }).click();
   await page.getByRole("button", { name: "Show source" }).click();
   await expect(
     page.getByRole("textbox", { name: "Diagram source" }),
@@ -147,16 +146,15 @@ test("retires a legacy BPMN autosave before opening Mermaid", async ({
           const request = database
             .transaction("documents", "readonly")
             .objectStore("documents")
-            .get("active");
+            .get("workspace");
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
         });
         database.close();
-        return (active as { schemaVersion?: unknown } | undefined)
-          ?.schemaVersion;
+        return (active as { version?: unknown } | undefined)?.version;
       }),
     )
-    .toBe(2);
+    .toBe(1);
   await page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("manatee-studio", 1);
@@ -202,7 +200,7 @@ test("retires a legacy BPMN autosave before opening Mermaid", async ({
         const store = database
           .transaction("documents", "readonly")
           .objectStore("documents");
-        const active = store.get("active");
+        const active = store.get("workspace");
         const retired = store.get("retired-bpmn");
         retired.onsuccess = () =>
           resolve({ active: active.result, retired: retired.result });
@@ -213,8 +211,8 @@ test("retires a legacy BPMN autosave before opening Mermaid", async ({
     return values;
   });
   expect(stored.active).toMatchObject({
-    filename: "request-flow.mmd",
-    schemaVersion: 2,
+    version: 1,
+    tabs: [expect.objectContaining({ filename: "request-flow.mmd" })],
   });
   expect(stored.active).not.toHaveProperty("kind");
   expect(stored.retired).toMatchObject({
@@ -358,7 +356,7 @@ test("reclaims the canvas when panels close and keeps menus keyboard accessible"
   await page.getByText("Export", { exact: true }).click();
   await page.keyboard.press("Escape");
   await expect(
-    page.locator(".export-menu:not(.examples-menu) summary"),
+    page.locator(".topbar .export-menu:not(.examples-menu) summary"),
   ).toBeFocused();
   await expect(
     page.getByRole("button", { name: "Download PNG" }),
@@ -370,8 +368,8 @@ test("exports authored appearance without the editor selection highlight", async
 }) => {
   await page.goto("./");
   await page.locator('[data-element-id="review"]').click();
-  await page.getByLabel("Outline colour").fill("#123456");
-  await page.getByRole("button", { name: "Apply appearance" }).click();
+  await page.getByLabel("Outline colour", { exact: true }).fill("#123456");
+  await page.getByLabel("Outline colour", { exact: true }).blur();
   await expect(page.locator('[data-element-id="review"]')).toHaveClass(
     /selected/,
   );

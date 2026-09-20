@@ -1,8 +1,10 @@
 # Manatee
 
-Manatee is a browser-based presentation editor for portable Mermaid diagrams. It can enrich flowcharts and swimlanes with common BPMN notation while ordinary Mermaid viewers show a simpler readable process. Use the public Studio at [mlperrott.github.io/manatee](https://mlperrott.github.io/manatee/); editing and autosave stay in the browser and require no account.
+Manatee is a browser-based visual and presentation editor for portable Mermaid diagrams. It can enrich flowcharts and swimlanes with common BPMN notation while ordinary Mermaid viewers show a simpler readable process. Use the public Studio at [mlperrott.github.io/manatee](https://mlperrott.github.io/manatee/); editing and autosave stay in the browser and require no account.
 
 Supported syntax, portability rules, browser targets, and release evidence are documented in [the release guide](docs/release.md).
+
+Explore the example gallery, create and edit diagrams visually, or protect imported Mermaid source while changing only its presentation. See [the Studio guide](docs/studio.md) for editing scope, controls, open documents and recovery.
 
 ## Development
 
@@ -36,7 +38,7 @@ middleware.
 
 ## Structure
 
-- `src/core` — session ordering and source-preserving metadata codecs.
+- `src/core` — multiple-document workspace, session ordering and source-preserving metadata codecs.
 - `src/mermaid` — the concrete Mermaid document, notation, layout, and SVG rendering.
 - `src/persistence` — browser document storage.
 - `src/export` — SVG, PNG, and clipboard export.

@@ -1,4 +1,8 @@
 import type {
+  SavedWorkspace,
+  WorkspaceTab,
+} from "../core/document/DocumentWorkspace";
+import type {
   DocumentStore,
   SavedDocument,
 } from "../core/document/DocumentSession";
@@ -152,6 +156,55 @@ export class IndexedDbDocumentRepository implements DocumentStore {
         .objectStore(STORE)
         .delete(ACTIVE_DOCUMENT);
       await requestResult(request);
+    } finally {
+      database.close();
+    }
+  }
+
+  async loadWorkspace(): Promise<SavedWorkspace | undefined> {
+    const database = await this.#open();
+    try {
+      const value = storedRecord(
+        await requestResult(
+          database
+            .transaction(STORE, "readonly")
+            .objectStore(STORE)
+            .get("workspace"),
+        ),
+      );
+      if (
+        value?.version !== 1 ||
+        !Array.isArray(value.tabs) ||
+        typeof value.activeId !== "string"
+      )
+        return;
+      const tabs = value.tabs.filter((tab: unknown): tab is WorkspaceTab => {
+        const record = storedRecord(tab);
+        return (
+          !!record &&
+          typeof record.id === "string" &&
+          typeof record.filename === "string" &&
+          typeof record.source === "string" &&
+          typeof record.sourceEditing === "boolean" &&
+          typeof record.savedSource === "string"
+        );
+      });
+      return { version: 1, activeId: value.activeId, tabs };
+    } finally {
+      database.close();
+    }
+  }
+
+  async saveWorkspace(workspace: SavedWorkspace): Promise<void> {
+    const database = await this.#open();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction(STORE, "readwrite");
+        transaction.objectStore(STORE).put(workspace, "workspace");
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = transaction.onabort = () =>
+          reject(transaction.error ?? new Error("Workspace save failed."));
+      });
     } finally {
       database.close();
     }

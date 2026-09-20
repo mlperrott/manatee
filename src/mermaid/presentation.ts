@@ -2,6 +2,7 @@ import type { PresentationCommandType } from "../core/document/commands";
 import type { PresentationCommandAvailability } from "../core/document/types";
 
 export const presentationCommandTypes = [
+  "edit-metadata",
   "move",
   "set-appearance",
   "set-notation",
