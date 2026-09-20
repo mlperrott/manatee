@@ -1,4 +1,4 @@
-import { createSignal, onSettled } from "solid-js";
+import { createMemo, createSignal, For, onSettled } from "solid-js";
 import { studioExamples, type StudioExample } from "./examples";
 export function ExamplesGallery(props: {
   open: (example: StudioExample) => void;
@@ -6,6 +6,14 @@ export function ExamplesGallery(props: {
 }) {
   let dialog: HTMLDialogElement | undefined;
   const [filter, setFilter] = createSignal("");
+  const examples = createMemo(() => {
+    const query = filter().trim().toLowerCase();
+    return studioExamples.filter((example) =>
+      `${example.title} ${example.category} ${example.description} ${example.notice}`
+        .toLowerCase()
+        .includes(query),
+    );
+  });
   onSettled(() => {
     dialog?.showModal();
     return () => dialog?.close();
@@ -47,13 +55,8 @@ export function ExamplesGallery(props: {
         />
       </label>
       <div class="example-grid">
-        {studioExamples
-          .filter((example) =>
-            `${example.title} ${example.category} ${example.description} ${example.notice}`
-              .toLowerCase()
-              .includes(filter().toLowerCase()),
-          )
-          .map((example) => (
+        <For each={examples()}>
+          {(example) => (
             <article class={`example-card example-card--${example.id}`}>
               <span class="eyebrow">{example.category}</span>
               <h3>{example.title}</h3>
@@ -62,7 +65,8 @@ export function ExamplesGallery(props: {
                 Open {example.title}
               </button>
             </article>
-          ))}
+          )}
+        </For>
       </div>
     </dialog>
   );

@@ -17,7 +17,7 @@ Build one client-only Vite application with a framework-neutral `DocumentEngine`
 - `MermaidDocumentAdapter` delegates family extraction to version-pinned flowchart, swimlane, C4 context, and C4 container adapters. It uses `mermaid@11.17.2` for parsing, `yaml@2.9.x` for source-preserving front matter, `elkjs@0.12.x` in a Web Worker for automatic placement, Manatee routing/reconciliation, and a Manatee SVG scene.
 - `BpmnDocumentAdapter` is lazy loaded for `.bpmn`/BPMN XML. It uses `bpmn-js@18.28.0` and `bpmn-moddle@10.2.0`, standard BPMN DI for shared geometry, and a Manatee XML extension for richer presentation. `bpmn-auto-layout@2.0.0-alpha.2` is isolated behind a worker interface for Reset layout and missing-DI recovery, subject to the release corpus.
 
-The UI is a thin Solid adapter over immutable engine snapshots and commands. Pin `solid-js@2.0.0-rc.7`, `@solidjs/web@2.0.0-rc.7`, `@solidjs/vite-plugin@3.0.0-next.40`, `vite@8.2.2`, and `typescript@7.0.2`. Follow the practices recorded in [`docs/research/solidjs-2-prerelease.md`](../research/solidjs-2-prerelease.md).
+The UI is a thin Solid adapter over immutable engine snapshots and commands. Pin compatible Solid RC core, web, and Vite plugin versions together. The current pins live in `package.json`; the version rationale and framework practices are recorded in [`docs/research/solidjs-2-prerelease.md`](../research/solidjs-2-prerelease.md).
 
 ### Engine boundary
 
