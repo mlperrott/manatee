@@ -211,6 +211,7 @@ export default function App() {
             : {}),
           outdated: current.previewOutdated,
           title: "Manatee Mermaid diagram",
+          interactive: true,
         })
       : "";
   });

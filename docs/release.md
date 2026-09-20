@@ -26,4 +26,4 @@ PowerPoint for Microsoft 365 accepts SVG and PNG. Google Slides accepts PNG, so 
 
 ## Using the Studio on iPhone
 
-Use the bottom Canvas, Source, and Inspector controls to switch views. Tap an element and open Inspector to choose process notation, change appearance, or move it precisely. Swipe a zoomed diagram to scroll; Fit returns to the whole diagram. Source fields and menus remain accessible when the keyboard opens. Autosave is local to the browser; use Save for a portable copy.
+Use the bottom Canvas, Source, and Inspector controls to switch views. Tap a node or connection to select it, and open Inspector to choose process notation or change appearance. Drag a node to position it, or use Inspector controls for precise moves. Swipe blank canvas or a connection to scroll; Fit returns to the whole diagram. Source fields and menus remain accessible when the keyboard opens. Autosave is local to the browser; use Save for a portable copy.
