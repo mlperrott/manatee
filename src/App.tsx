@@ -1,5 +1,11 @@
-import { createMemo, createSignal, onSettled, Show } from "solid-js";
-import { createStore } from "solid-js";
+import {
+  createMemo,
+  createSignal,
+  createStore,
+  For,
+  onSettled,
+  Show,
+} from "solid-js";
 
 import {
   boundaryTimerNotation,
@@ -629,59 +635,65 @@ export default function App() {
       </header>
       <div class="document-workspace-bar">
         <div class="document-tabs" role="tablist" aria-label="Open documents">
-          {tabs().map((tab) => (
-            <div class="document-tab" data-active={tab.id === activeId()}>
-              <button
-                type="button"
-                role="tab"
-                id={`document-tab-${tab.id}`}
-                tabindex={tab.id === activeId() ? 0 : -1}
-                aria-controls="workspace"
-                onKeyDown={(event) => {
-                  if (
-                    !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
-                      event.key,
+          <For each={tabs()} keyed={(tab) => tab.id}>
+            {(tab) => (
+              <div class="document-tab" data-active={tab().id === activeId()}>
+                <button
+                  type="button"
+                  role="tab"
+                  id={`document-tab-${tab().id}`}
+                  tabindex={tab().id === activeId() ? 0 : -1}
+                  aria-controls="workspace"
+                  onKeyDown={(event) => {
+                    if (
+                      !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                        event.key,
+                      )
                     )
-                  )
-                    return;
-                  event.preventDefault();
-                  const list = tabs();
-                  const index = list.findIndex((item) => item.id === tab.id);
-                  const nextIndex =
-                    event.key === "Home"
-                      ? 0
-                      : event.key === "End"
-                        ? list.length - 1
-                        : (index +
-                            (event.key === "ArrowRight" ? 1 : -1) +
-                            list.length) %
-                          list.length;
-                  const next = list[nextIndex]!;
-                  documentSession.select(next.id);
-                  resetView();
-                  requestAnimationFrame(() =>
-                    document.getElementById(`document-tab-${next.id}`)?.focus(),
-                  );
-                }}
-                aria-selected={tab.id === activeId() ? "true" : "false"}
-                onClick={() => {
-                  documentSession.select(tab.id);
-                  resetView();
-                }}
-              >
-                {tab.filename}
-                {tab.source !== tab.savedSource ? " •" : ""}
-              </button>
-              <button
-                type="button"
-                aria-label={`Close ${tab.filename}`}
-                disabled={tabs().length === 1}
-                onClick={() => closeDocument(tab.id)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+                      return;
+                    event.preventDefault();
+                    const list = tabs();
+                    const index = list.findIndex(
+                      (item) => item.id === tab().id,
+                    );
+                    const nextIndex =
+                      event.key === "Home"
+                        ? 0
+                        : event.key === "End"
+                          ? list.length - 1
+                          : (index +
+                              (event.key === "ArrowRight" ? 1 : -1) +
+                              list.length) %
+                            list.length;
+                    const next = list[nextIndex]!;
+                    documentSession.select(next.id);
+                    resetView();
+                    requestAnimationFrame(() =>
+                      document
+                        .getElementById(`document-tab-${next.id}`)
+                        ?.focus(),
+                    );
+                  }}
+                  aria-selected={tab().id === activeId() ? "true" : "false"}
+                  onClick={() => {
+                    documentSession.select(tab().id);
+                    resetView();
+                  }}
+                >
+                  {tab().filename}
+                  {tab().source !== tab().savedSource ? " •" : ""}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Close ${tab().filename}`}
+                  disabled={tabs().length === 1}
+                  onClick={() => closeDocument(tab().id)}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+          </For>
         </div>
         <details class="export-menu new-document-menu">
           <summary class="button">New</summary>

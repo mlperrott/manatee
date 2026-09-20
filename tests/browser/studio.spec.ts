@@ -105,6 +105,11 @@ test("opens teaching examples in separate tabs and restores the workspace", asyn
 test("creates nodes, groups and connections without typing Mermaid", async ({
   page,
 }) => {
+  const reactivityWarnings: string[] = [];
+  page.on("console", (message) => {
+    if (message.text().includes("[STRICT_READ_UNTRACKED]"))
+      reactivityWarnings.push(message.text());
+  });
   await page.goto("./");
   await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
   await page.locator(".new-document-menu summary").click();
@@ -152,6 +157,7 @@ test("creates nodes, groups and connections without typing Mermaid", async ({
   await expect(page.getByLabel("Diagram source")).toHaveValue(
     /subgraph team[^]*first\[/,
   );
+  expect(reactivityWarnings).toEqual([]);
 });
 
 test("edits typed attributes and complete styling rules", async ({ page }) => {

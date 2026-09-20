@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, untrack } from "solid-js";
 import type { MermaidDocumentSnapshot } from "../../mermaid";
 import type { DocumentCommand } from "../../core/document/commands";
 import {
@@ -15,22 +15,29 @@ function StructureForm(props: {
   execute: (command: DocumentCommand) => Promise<boolean>;
   done: () => void;
 }) {
-  const model = props.snapshot.model!;
+  // The form owns a draft of the selected model at the moment it opens.
+  // A keyed Show remounts it for a different edit target.
+  const initial = untrack(() => ({
+    model: props.snapshot.model!,
+    action: props.action,
+    existingId: props.existingId,
+  }));
+  const { model, action } = initial;
   const flow = model.family === "flowchart" || model.family === "swimlane";
   const existing = [
     ...model.nodes,
     ...model.groups,
     ...model.relationships,
-  ].find((item) => item.id === props.existingId);
+  ].find((item) => item.id === initial.existingId);
   const [id, setId] = createSignal(
     existing?.id ??
-      `${props.action}_${[...model.nodes, ...model.groups, ...model.relationships].length + 1}`,
+      `${action}_${[...model.nodes, ...model.groups, ...model.relationships].length + 1}`,
   );
   const [authoredId, setAuthoredId] = createSignal("");
   const [label, setLabel] = createSignal(existing?.label ?? "");
   const [kind, setKind] = createSignal(
     existing?.kind ??
-      (props.action === "relationship"
+      (action === "relationship"
         ? flow
           ? "arrow_point"
           : "rel"

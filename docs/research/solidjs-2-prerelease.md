@@ -1,22 +1,22 @@
 # SolidJS 2 prerelease practices for Manatee
 
-Research date: 2026-09-10. Sources are the Solid project, its release artifacts, and first-party package metadata.
+Research updated: 2026-09-20. Sources are the Solid project, its release artifacts, and first-party package metadata.
 
 ## Version decision input
 
-The Solid 2 prerelease has advanced from beta to release candidate. The current compatible core pair is `solid-js@2.0.0-rc.7` and `@solidjs/web@2.0.0-rc.7`. The npm `next` tag selects that line; the npm `beta` tag for `solid-js` now points to `1.10.0-beta.0`, so installing `solid-js@beta` would not install Solid 2. The final published Solid 2 beta pair is `2.0.0-beta.34`, but it has been superseded by the RC line. The Solid team describes the RC interface as frozen while still subject to prerelease bugs. Manatee should therefore pin exact versions and upgrade the Solid packages as one tested set. [Solid 2 RC announcement](https://github.com/solidjs/solid/discussions/2995) · [solid-js versions](https://www.npmjs.com/package/solid-js?activeTab=versions) · [@solidjs/web versions](https://www.npmjs.com/package/%40solidjs/web?activeTab=versions)
+The Solid 2 prerelease has advanced from beta to release candidate. The current compatible core pair is `solid-js@2.0.0-rc.9` and `@solidjs/web@2.0.0-rc.9`. The npm `next` tag selects that line; the npm `beta` tag for `solid-js` points to `1.10.0-beta.0`, so installing `solid-js@beta` would not install Solid 2. The Solid team describes the RC interface as frozen while still subject to prerelease bugs. Manatee pins exact versions and upgrades the Solid packages as one tested set. [Solid 2 RC announcement](https://github.com/solidjs/solid/discussions/2995) · [RC.9 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.9) · [solid-js versions](https://www.npmjs.com/package/solid-js?activeTab=versions)
 
 The aligned browser build stack on the research date is:
 
 | Package | Pin | Role |
 | --- | --- | --- |
-| `solid-js` | `2.0.0-rc.7` | Reactive core, stores, and control flow |
-| `@solidjs/web` | `2.0.0-rc.7` | DOM runtime and JSX types |
-| `@solidjs/vite-plugin` | `3.0.0-next.40` | Solid 2 compiler and Vite integration |
+| `solid-js` | `2.0.0-rc.9` | Reactive core, stores, and control flow |
+| `@solidjs/web` | `2.0.0-rc.9` | DOM runtime and JSX types |
+| `@solidjs/vite-plugin` | `3.0.0-next.44` | Solid 2 compiler and Vite integration |
 | `vite` | `8.2.2` | Development and production build |
 | `typescript` | `7.0.2` | Type checking |
 
-`@solidjs/vite-plugin@3.0.0-next.40` requires the RC.7 core/web pair and Vite 8 or 9. It uses Solid's OXC-based compiler by default. The package has been renamed from `vite-plugin-solid` to `@solidjs/vite-plugin`. [Plugin package at the researched revision](https://github.com/solidjs/solid-vite-plugin/blob/09d73a9d6dcacdf1d778a4972cf1efb43b6c6513/package.json) · [Plugin documentation](https://github.com/solidjs/solid-vite-plugin/tree/09d73a9d6dcacdf1d778a4972cf1efb43b6c6513)
+`@solidjs/vite-plugin@3.0.0-next.44` requires the RC.9 core/web pair and Vite 8 or 9. Its compiler emits output that requires the matching RC.9 runtime, including new spread and delegated-event representations. It uses Solid's OXC-based compiler by default. [Plugin RC.9 compatibility notes](https://github.com/solidjs/solid-vite-plugin/releases/tag/%40solidjs%2Fvite-plugin%403.0.0-next.44) · [Plugin documentation](https://github.com/solidjs/solid-vite-plugin/tree/c94fcf3)
 
 ## Build shape for Manatee
 
@@ -45,15 +45,15 @@ Configure TypeScript's web JSX owner explicitly:
 }
 ```
 
-Import reactive primitives, stores, and renderer-neutral component types from `solid-js`. Import `render`, DOM helpers, `JSX`, and DOM component-prop types from `@solidjs/web`. Old `solid-js/web` and `solid-js/store` subpaths are removed. [Solid 2 migration guide at RC.7](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/MIGRATION.md) · [TypeScript and JSX RFC](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/09-typescript-jsx.md)
+Import reactive primitives, stores, and renderer-neutral component types from `solid-js`. Import `render`, DOM helpers, `JSX`, and DOM component-prop types from `@solidjs/web`. Old `solid-js/web` and `solid-js/store` subpaths are removed. [Solid 2 migration guide at RC.9](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/MIGRATION.md) · [TypeScript and JSX RFC](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/09-typescript-jsx.md)
 
 ### Local verification
 
-A throwaway RC.7 application was type-checked and built with the pins above, `solid({ start: true })`, and `base: "/manatee/"`. It emitted `dist/client/index.html` whose asset URL carried the `/manatee/` prefix. The sample exercised `createSignal`/`createMemo`, draft-first `createStore`, a split effect, `onSettled`, `<For>`, and object/array classes. This verifies toolchain compatibility, not Manatee's production behavior.
+Manatee was type-checked, unit-tested, browser-tested, and built with the pins above. The production build emits `dist/client/index.html` with `/manatee/` asset URLs. Start mode still returns 404 in local development, so `vite.config.ts` uses the regular Vite SPA entry for `serve` and start mode for `build` and `preview`.
 
 ## Idiomatic Solid 2 rules
 
-The [RC.7 cheatsheet](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/packages/solid/CHEATSHEET.md) explicitly warns that React and Solid 1.x patterns are common code-generation errors. Manatee should use the following rules in code and review.
+The [Solid 2 cheatsheet](https://github.com/solidjs/solid/blob/next/packages/solid/CHEATSHEET.md) describes the current component and reactivity patterns. Manatee should use the following rules in code and review.
 
 ### State and derivation
 
@@ -63,7 +63,7 @@ The [RC.7 cheatsheet](https://github.com/solidjs/solid/blob/b1c4399ef72639758137
 - Updates are automatically microtask-batched. A read immediately after a setter sees the previous committed value. Use the value returned by the document-engine command in application code; reserve `flush()` for tests or rare imperative synchronization.
 - Pass signal values into components and read reactive props through `props.name`. Do not pass accessors accidentally and do not destructure reactive props at component scope.
 
-[Signals and ownership RFC](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/02-signals-derived-ownership.md) · [Stores RFC](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/04-stores.md)
+[Signals and ownership RFC](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/02-signals-derived-ownership.md) · [Stores RFC](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/04-stores.md)
 
 ### Effects, lifecycle, and asynchronous work
 
@@ -73,7 +73,7 @@ The [RC.7 cheatsheet](https://github.com/solidjs/solid/blob/b1c4399ef72639758137
 - Manatee's debounced source-to-worker synchronization should compute the source text, then schedule/cancel the worker request in the effect's apply phase.
 - If future UI data is naturally a Promise, use an async `createMemo` with `<Loading>` and `<Errored>`. `createResource`, `Suspense`, and `ErrorBoundary` are Solid 1 APIs.
 
-[Reactivity, batching, and effects RFC](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/01-reactivity-batching-effects.md) · [Async data RFC](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/05-async-data.md)
+[Reactivity, batching, and effects RFC](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/01-reactivity-batching-effects.md) · [Async data RFC](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/05-async-data.md)
 
 ### Components, lists, DOM, and SVG
 
@@ -83,7 +83,7 @@ The [RC.7 cheatsheet](https://github.com/solidjs/solid/blob/b1c4399ef72639758137
 - Use `ref` callbacks or two-phase ref directive factories for canvas/SVG measurement, dragging, ResizeObserver, pointer capture, and native listener options. Create reactive primitives in the owned setup phase and perform DOM mutation in the returned unowned callback.
 - Keep diagram geometry and SVG scene data outside JSX. Solid components should render the scene declaratively; direct DOM manipulation is limited to interaction mechanics and measurement at refs.
 
-[Control-flow RFC](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/03-control-flow.md) · [DOM RFC](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/07-dom.md)
+[Control-flow RFC](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/03-control-flow.md) · [DOM RFC](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/07-dom.md)
 
 ### Context and module state
 
@@ -96,7 +96,7 @@ The [RC.7 cheatsheet](https://github.com/solidjs/solid/blob/b1c4399ef72639758137
 - Test the document engine through its framework-neutral interface with Vitest. These tests cover source preservation, parsing adapters, metadata reconciliation, layout constraints, routing, and scene generation without mounting Solid.
 - Use `@solidjs/testing-library` only for meaningful editor interactions and accessibility behavior. Use Playwright for browser behavior, worker integration, SVG/PNG export, clipboard fallback, file workflows, and the deployed Pages smoke test.
 - In tests that intentionally inspect a just-written reactive value, call `flush()` rather than relying on Solid 1's synchronous setter behavior.
-- Run Solid development diagnostics in component tests and fail on unexpected diagnostics. The RC adds codes for top-level reactive reads, writes under owned scopes, untracked reads, and multiple Solid copies. [Dev diagnostics RFC](https://github.com/solidjs/solid/blob/b1c4399ef726397581374bd9378d9e4596c83dba/documentation/solid-2.0/08-dev-diagnostics.md)
+- Run Solid development diagnostics in component tests and fail on unexpected diagnostics. The RC adds codes for top-level reactive reads, writes under owned scopes, untracked reads, and multiple Solid copies. [Dev diagnostics RFC](https://github.com/solidjs/solid/blob/9a29b1a/documentation/solid-2.0/08-dev-diagnostics.md)
 - Pin the entire prerelease tuple exactly in the lockfile. Upgrade `solid-js`, `@solidjs/web`, and the Vite plugin together only when typecheck, unit, component, browser, export, and deployed smoke checks all pass.
 
 Recommended test pins on the research date are `vitest@5.0.0`, `@solidjs/testing-library@0.8.10`, and `playwright@1.63.0`. These versions were obtained from first-party npm package metadata; they should be rechecked when implementation begins.
