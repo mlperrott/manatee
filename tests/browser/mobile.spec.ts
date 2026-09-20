@@ -84,8 +84,8 @@ test("edits, selects, moves, styles, undoes, exports, and recovers on iPhone", a
   await view(page, "Inspector");
   await expect(page.locator(".selection-summary code")).toHaveText("phone");
   await page.getByRole("button", { name: "Move selection right" }).tap();
-  await page.getByLabel("Fill colour").fill("#ffccaa");
-  await page.getByRole("button", { name: "Apply appearance" }).tap();
+  await page.getByLabel("Fill colour", { exact: true }).fill("#ffccaa");
+  await page.getByLabel("Fill colour", { exact: true }).blur();
   await view(page, "Source");
   await expect(source).toHaveValue(/position:/);
   await expect(source).toHaveValue(/ffccaa/);
@@ -112,10 +112,9 @@ test("edits, selects, moves, styles, undoes, exports, and recovers on iPhone", a
   await page.waitForTimeout(500);
   await page.reload();
   await expect(
-    page.getByRole("region", { name: "Autosave recovery" }),
-  ).toBeInViewport();
+    page.getByRole("tab", { name: "request-flow.mmd •", exact: true }),
+  ).toBeVisible();
   await noPageOverflow(page);
-  await page.getByRole("button", { name: "Recover", exact: true }).tap();
   await view(page, "Source");
   await expect(source).toHaveValue("flowchart TD\n  phone[");
   expect(errors).toEqual([]);
@@ -170,8 +169,8 @@ test("opens portable files and reaches process notation and export", async ({
   await page
     .getByLabel("Process notation")
     .selectOption("collapsed-subprocess");
-  await page.getByLabel("Fill colour").fill("#ffccaa");
-  await page.getByRole("button", { name: "Apply appearance" }).tap();
+  await page.getByLabel("Fill colour", { exact: true }).fill("#ffccaa");
+  await page.getByLabel("Fill colour", { exact: true }).blur();
   await view(page, "Source");
   await expect(
     page.getByRole("textbox", { name: "Diagram source" }),
@@ -179,7 +178,7 @@ test("opens portable files and reaches process notation and export", async ({
   await page.getByText("Export", { exact: true }).tap();
   const exportPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download SVG" }).tap();
-  expect((await exportPromise).suggestedFilename()).toBe("request-flow.svg");
+  expect((await exportPromise).suggestedFilename()).toBe("process.svg");
 });
 
 test("cancelled touch drags never move an element", async ({ page }) => {
@@ -243,4 +242,46 @@ test("notation controls are touch sized and explain timeout hosts only when need
   await expect(host).toBeVisible();
   expect((await host.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await expect(host.locator("option:checked")).toHaveText("Review request");
+});
+
+test("explores examples and visually authors a diagram on a phone", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("./");
+  await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Example gallery", exact: true })
+    .tap();
+  await page
+    .getByRole("button", { name: "Open Simple BPMN", exact: true })
+    .tap();
+  await expect(
+    page.getByRole("tab", { name: "simple-bpmn.mmd", exact: true }),
+  ).toBeVisible();
+  await view(page, "Inspector");
+  await page.getByText("Create and edit structure", { exact: true }).tap();
+  await page.getByRole("button", { name: "Add node", exact: true }).tap();
+  await page.getByLabel("Element identifier").fill("extra");
+  await page.getByLabel("Element label").fill("Phone task");
+  await page.getByRole("button", { name: "Create node", exact: true }).tap();
+  await view(page, "Canvas");
+  await page.locator('[data-element-id="extra"]').tap();
+  await view(page, "Inspector");
+  await page.getByLabel("Process notation").selectOption("task");
+  await page.getByText("Typography", { exact: true }).tap();
+  await page.getByLabel("Text weight", { exact: true }).selectOption("700");
+  await view(page, "Source");
+  await expect(page.getByLabel("Diagram source")).toHaveValue(/weight: 700/);
+  await noPageOverflow(page);
+  await view(page, "Canvas");
+  page.on("dialog", (dialog) => dialog.dismiss());
+  await page
+    .getByRole("button", { name: "Close simple-bpmn.mmd", exact: true })
+    .tap();
+  await expect(
+    page.getByRole("tab", { name: "simple-bpmn.mmd •", exact: true }),
+  ).toBeVisible();
+  expect(errors).toEqual([]);
 });

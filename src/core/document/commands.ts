@@ -1,5 +1,5 @@
 import type { SourcePatch } from "./types";
-import type { MetadataValue } from "../metadata/types";
+import type { MetadataEdit, MetadataValue } from "../metadata/types";
 
 export interface PresentationAppearance {
   readonly fill?: string;
@@ -30,6 +30,7 @@ export interface BoundaryTimerSettings {
 }
 
 export type PresentationCommand =
+  | { readonly type: "edit-metadata"; readonly edits: readonly MetadataEdit[] }
   | {
       readonly type: "move";
       readonly elementId: string;
@@ -84,6 +85,11 @@ export class CommandUnavailableError extends Error {
 }
 
 export type DocumentCommand =
+  | { readonly type: "set-source-editing"; readonly allowed: boolean }
+  | {
+      readonly type: "edit-structure";
+      readonly edit: import("../../mermaid/authoring").StructureEdit;
+    }
   | {
       readonly type: "replace-source";
       readonly source: string;

@@ -288,9 +288,17 @@ export function renderMermaidSvg(
             ? `<path d="M 2 2 L 8 8 M 8 2 L 2 8" fill="none" stroke="${color}" stroke-width="1.75"/>`
             : `<path d="M 0 0 L 10 5 L 0 10 z" fill="${open ? "none" : color}" stroke="${color}"/>`;
       const startMarker =
-        !relationship.notation && relationship.kind.includes("double")
+        !relationship.notation &&
+        (relationship.kind.includes("double") ||
+          relationship.kind === "birel" ||
+          relationship.kind === "rel_b")
           ? ` marker-start="url(#${markerId})"`
           : "";
+      const endMarker =
+        !relationship.notation &&
+        (relationship.kind === "arrow_open" || relationship.kind === "rel_b")
+          ? ""
+          : ` marker-end="url(#${markerId})"`;
       const lineDash = messageFlow
         ? ' stroke-dasharray="7 5"'
         : sequenceFlow
@@ -301,7 +309,7 @@ export function renderMermaidSvg(
         messageFlow && start
           ? `<circle cx="${start.x}" cy="${start.y}" r="4" fill="#ffffff" stroke="${color}" stroke-width="1.5"/>`
           : "";
-      return `<g class="relationship${selected}" data-element-id="${escapeAttribute(relationship.id)}"${relationship.notation ? ` data-notation="${relationship.notation}"` : ""}><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">${marker}</marker></defs><path d="${path(relationship.points)}" fill="none" stroke="${color}" stroke-width="${relationship.style.width}"${lineDash}${startMarker} marker-end="url(#${markerId})"/>${messageStart}${relationship.label ? label(relationship.label, relationship.labelBounds ? { x: relationship.labelBounds.x + relationship.labelBounds.width / 2, y: relationship.labelBounds.y + relationship.labelBounds.height / 2 } : midpoint(relationship.points), relationship.style.text, "relationship-label", 240) : ""}</g>`;
+      return `<g class="relationship${selected}" data-element-id="${escapeAttribute(relationship.id)}"${relationship.notation ? ` data-notation="${relationship.notation}"` : ""}><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">${marker}</marker></defs><path d="${path(relationship.points)}" fill="none" stroke="${color}" stroke-width="${relationship.style.width}"${lineDash}${startMarker}${endMarker}/>${messageStart}${relationship.label ? label(relationship.label, relationship.labelBounds ? { x: relationship.labelBounds.x + relationship.labelBounds.width / 2, y: relationship.labelBounds.y + relationship.labelBounds.height / 2 } : midpoint(relationship.points), relationship.style.text, "relationship-label", 240) : ""}</g>`;
     })
     .join("");
   const nodes = scene.nodes
