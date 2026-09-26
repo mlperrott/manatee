@@ -1,8 +1,9 @@
-import { route } from "./routing";
+import { routeWithStatus } from "./routing";
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { ElkNode } from "elkjs/lib/elk-api";
 
 import type { DocumentDiagnostic } from "../../core/document/types";
+import type { ConnectionDock } from "../../core/document/commands";
 import type {
   MermaidGroup,
   MermaidNode,
@@ -478,6 +479,34 @@ function relationshipMetadata(
   return;
 }
 
+const connectionDocks = new Set<ConnectionDock>([
+  "top",
+  "right",
+  "bottom",
+  "left",
+]);
+
+function relationshipDocks(settings: unknown): {
+  readonly sourceDock?: ConnectionDock | undefined;
+  readonly targetDock?: ConnectionDock | undefined;
+} {
+  const docks = metadataRecord(metadataRecord(settings).docks);
+  const source = docks.source;
+  const target = docks.target;
+  return {
+    sourceDock:
+      typeof source === "string" &&
+      connectionDocks.has(source as ConnectionDock)
+        ? (source as ConnectionDock)
+        : undefined,
+    targetDock:
+      typeof target === "string" &&
+      connectionDocks.has(target as ConnectionDock)
+        ? (target as ConnectionDock)
+        : undefined,
+  };
+}
+
 export async function computeMermaidScene(
   request: MermaidLayoutRequest,
 ): Promise<MermaidScene> {
@@ -665,6 +694,26 @@ export async function computeMermaidScene(
       const source = elementById.get(relationship.source);
       const target = elementById.get(relationship.target);
       if (!source || !target) return [];
+      const settings = relationshipMetadata(relationship, metadata);
+      const docks = relationshipDocks(settings);
+      const hasDockLock =
+        docks.sourceDock !== undefined || docks.targetDock !== undefined;
+      const routed = routeWithStatus(
+        source,
+        target,
+        hasDockLock && obstacles.length === 0
+          ? [...nodes, ...groups.map(groupLabelBounds)]
+          : obstacles,
+        docks,
+      );
+      if (routed.blocked && hasDockLock) {
+        diagnostics.push({
+          code: "manatee.routing.dock-blocked",
+          message: `The dock lock on ${displayLabel(relationship) || relationship.id} cannot avoid another diagram element.`,
+          severity: "warning",
+          path: `presentation.elements.relationships.${relationship.id}.docks`,
+        });
+      }
       return [
         {
           id: relationship.id,
@@ -673,11 +722,10 @@ export async function computeMermaidScene(
           kind: relationship.kind,
           notation: relationshipNotation(metadata, relationship),
           label: displayLabel(relationship),
-          points: Object.freeze(route(source, target, obstacles)),
-          style: computedRelationshipStyle(
-            relationshipMetadata(relationship, metadata),
-            relationship.style,
-          ),
+          points: Object.freeze(routed.points),
+          dockEditable: relationship.identity.kind !== "ambiguous",
+          ...docks,
+          style: computedRelationshipStyle(settings, relationship.style),
         },
       ];
     },
@@ -723,22 +771,47 @@ export function rerouteMermaidScene(scene: MermaidScene): MermaidScene {
         ...scene.groups.map(groupLabelBounds),
       ]
     : [];
+  const dockDiagnostics: DocumentDiagnostic[] = [];
   const relationships = placeRelationshipLabels(
     scene.relationships.map((relationship) => {
       const source = elementById.get(relationship.source);
       const target = elementById.get(relationship.target);
-      return source && target
-        ? {
-            ...relationship,
-            points: Object.freeze(route(source, target, obstacles)),
-          }
-        : relationship;
+      if (!source || !target) return relationship;
+      const hasDockLock =
+        relationship.sourceDock !== undefined ||
+        relationship.targetDock !== undefined;
+      const routed = routeWithStatus(
+        source,
+        target,
+        hasDockLock && obstacles.length === 0
+          ? [...scene.nodes, ...scene.groups.map(groupLabelBounds)]
+          : obstacles,
+        {
+          sourceDock: relationship.sourceDock,
+          targetDock: relationship.targetDock,
+        },
+      );
+      if (routed.blocked && hasDockLock) {
+        dockDiagnostics.push({
+          code: "manatee.routing.dock-blocked",
+          message: `The dock lock on ${relationship.label || relationship.id} cannot avoid another diagram element.`,
+          severity: "warning",
+          path: `presentation.elements.relationships.${relationship.id}.docks`,
+        });
+      }
+      return { ...relationship, points: Object.freeze(routed.points) };
     }),
     scene.nodes,
     scene.groups,
   );
   return Object.freeze({
     ...scene,
+    diagnostics: Object.freeze([
+      ...scene.diagnostics.filter(
+        ({ code }) => code !== "manatee.routing.dock-blocked",
+      ),
+      ...dockDiagnostics,
+    ]),
     width: Math.ceil(
       Math.max(
         scene.width,

@@ -205,6 +205,45 @@ describe("Mermaid automatic layout", () => {
     }
   });
 
+  it("honours persisted cardinal dock locks", async () => {
+    const scene = await computeMermaidScene({
+      model: model(
+        [node("A"), node("B")],
+        [],
+        [relationship("edge", "A", "B")],
+      ),
+      metadata: {
+        elements: {
+          nodes: {
+            A: { position: { x: 40, y: 100 } },
+            B: { position: { x: 320, y: 180 } },
+          },
+          relationships: {
+            byId: {
+              edge: { docks: { source: "top", target: "left" } },
+            },
+          },
+        },
+      },
+    });
+    const edge = scene.relationships[0]!;
+    const source = scene.nodes.find(({ id }) => id === "A")!;
+    const target = scene.nodes.find(({ id }) => id === "B")!;
+    expect(edge).toMatchObject({
+      sourceDock: "top",
+      targetDock: "left",
+      dockEditable: true,
+    });
+    expect(edge.points[0]).toEqual({
+      x: source.x + source.width / 2,
+      y: source.y,
+    });
+    expect(edge.points.at(-1)).toEqual({
+      x: target.x,
+      y: target.y + target.height / 2,
+    });
+  });
+
   it.each([
     "flowchart-baseline.mmd",
     "swimlane-baseline.mmd",
@@ -267,6 +306,25 @@ describe("Mermaid SVG rendering", () => {
     expect(preview).toContain('font-style="italic"');
     expect(preview).toContain('class="node selected"');
     expect(preview).toContain('data-outdated="true"');
+  });
+
+  it("renders endpoint handles only for the selected interactive connection", async () => {
+    const scene = await computeMermaidScene({
+      model: model(
+        [node("A"), node("B")],
+        [],
+        [relationship("edge", "A", "B")],
+      ),
+      metadata: undefined,
+    });
+    const selected = renderMermaidPreviewSvg(scene, {
+      interactive: true,
+      selectedElementId: "edge",
+    });
+    expect(selected.match(/connection-endpoint-handle/gu)).toHaveLength(2);
+    expect(renderMermaidExportSvg(scene)).not.toContain(
+      "connection-endpoint-handle",
+    );
   });
 
   it("escapes labels and rejects resource-bearing paint values", async () => {

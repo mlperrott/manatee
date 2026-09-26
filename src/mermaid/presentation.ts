@@ -9,6 +9,7 @@ export const presentationCommandTypes = [
   "set-attribute",
   "create-styling-rule",
   "set-spacing",
+  "set-dock",
   "use-automatic-position",
   "reset-layout",
   "cleanup-unmatched",

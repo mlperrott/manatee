@@ -189,3 +189,151 @@ test("edits typed attributes and complete styling rules", async ({ page }) => {
     page.locator('[data-element-id="deliver"] rect').first(),
   ).toHaveAttribute("fill", "#d7eee6");
 });
+
+test("locks connection docks and reconnects with distinct drag targets", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "docking.mmd",
+    mimeType: "text/plain",
+    buffer: Buffer.from(`flowchart LR
+A[First] e1@--> B[Second]
+C[Third]
+`),
+  });
+  const edge = page.locator(
+    '.relationship[data-element-id="e1"] > path:not(.relationship-hit-area)',
+  );
+  await edge.click({ force: true });
+  await expect(page.locator(".connection-endpoint-handle")).toHaveCount(2);
+
+  const sourceHandle = page.locator(
+    '.connection-endpoints[data-element-id="e1"] .connection-endpoint-handle[data-endpoint="source"]',
+  );
+  const sourceHandleBox = (await sourceHandle.boundingBox())!;
+  const firstBox = (await page
+    .locator('.node[data-element-id="A"]')
+    .boundingBox())!;
+  await page.mouse.move(
+    sourceHandleBox.x + sourceHandleBox.width / 2,
+    sourceHandleBox.y + sourceHandleBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y, {
+    steps: 3,
+  });
+  await expect(
+    page.locator('.dock-target.is-active[data-dock="top"]'),
+  ).toHaveCount(1);
+  await page.mouse.up();
+  await expect(page.getByLabel("Source dock")).toHaveValue("top");
+  await page.getByRole("button", { name: "Show source" }).click();
+  await expect(page.getByLabel("Diagram source")).toHaveValue(
+    /docks:[^]*source: top/u,
+  );
+
+  await page.getByLabel("Allow Mermaid source edits").check();
+  const targetHandle = page.locator(
+    '.connection-endpoints[data-element-id="e1"] .connection-endpoint-handle[data-endpoint="target"]',
+  );
+  const targetBox = (await targetHandle.boundingBox())!;
+  const thirdBox = (await page
+    .locator('.node[data-element-id="C"]')
+    .boundingBox())!;
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    thirdBox.x + thirdBox.width / 2,
+    thirdBox.y + thirdBox.height / 2,
+    { steps: 5 },
+  );
+  await expect(
+    page.locator('.reconnect-target.is-active[data-node-id="C"]'),
+  ).toBeVisible();
+  await expect(page.getByText("Reconnect", { exact: true })).toBeVisible();
+  await page.mouse.up();
+  await expect(page.getByLabel("Diagram source")).toHaveValue(/A e1@--> C/u);
+  await expect(page.getByLabel("Target dock")).toHaveValue("auto");
+  await expect(page.getByLabel("Source dock")).toHaveValue("top");
+
+  await page.getByRole("button", { name: "Reset layout" }).click();
+  await expect(page.getByLabel("Source dock")).toHaveValue("auto");
+});
+
+test("snaps connected nodes and previews container descendants", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "movement.mmd",
+    mimeType: "text/plain",
+    buffer: Buffer.from(`flowchart LR
+subgraph team[Team]
+  A[First]
+  B[Second]
+end
+C[Third]
+A e1@--> B
+B e2@--> C
+`),
+  });
+
+  const child = page.locator('.node[data-element-id="A"]');
+  const group = page.locator('.group[data-element-id="team"] rect').first();
+  const internalConnection = page.locator(
+    '.relationship[data-element-id="e1"] > path:not(.relationship-hit-area)',
+  );
+  const childBefore = (await child.boundingBox())!;
+  const connectionBefore = await internalConnection.getAttribute("d");
+  const groupBox = (await group.boundingBox())!;
+  await page.mouse.move(groupBox.x + 8, groupBox.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(groupBox.x + 48, groupBox.y + 38, { steps: 3 });
+  await expect(child).toHaveAttribute("transform", /translate\(/u);
+  await expect(internalConnection).not.toHaveAttribute("d", connectionBefore!);
+  const childDuring = (await child.boundingBox())!;
+  expect(childDuring.x - childBefore.x).toBeGreaterThan(25);
+  await page.mouse.up();
+  await expect(child).not.toHaveAttribute("transform", /translate\(/u);
+
+  const first = page.locator('.node[data-element-id="A"]');
+  const second = page.locator('.node[data-element-id="B"]');
+  let secondBox = (await second.boundingBox())!;
+  await page.mouse.move(
+    secondBox.x + secondBox.width / 2,
+    secondBox.y + secondBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    secondBox.x + secondBox.width / 2,
+    secondBox.y + secondBox.height / 2 + 30,
+  );
+  await page.mouse.up();
+
+  secondBox = (await second.boundingBox())!;
+  await page.mouse.move(
+    secondBox.x + secondBox.width / 2,
+    secondBox.y + secondBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    secondBox.x + secondBox.width / 2,
+    secondBox.y + secondBox.height / 2 - 24,
+    { steps: 3 },
+  );
+  await expect(page.locator('.alignment-guide[data-axis="y"]')).toHaveCount(1);
+  await page.mouse.up();
+  const firstAfter = (await first.boundingBox())!;
+  const secondAfter = (await second.boundingBox())!;
+  expect(
+    Math.abs(
+      firstAfter.y +
+        firstAfter.height / 2 -
+        (secondAfter.y + secondAfter.height / 2),
+    ),
+  ).toBeLessThan(1);
+});

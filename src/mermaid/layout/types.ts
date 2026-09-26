@@ -1,6 +1,7 @@
 import type { DocumentDiagnostic } from "../../core/document/types";
 import type { MermaidSemanticModel } from "../model";
 import type { NotationChoice } from "../../core/document/commands";
+import type { ConnectionDock } from "../../core/document/commands";
 
 export interface Point {
   readonly x: number;
@@ -64,6 +65,9 @@ export interface LayoutRelationship {
   readonly notation: NotationChoice | undefined;
   readonly label: string;
   readonly points: readonly Point[];
+  readonly dockEditable: boolean;
+  readonly sourceDock?: ConnectionDock | undefined;
+  readonly targetDock?: ConnectionDock | undefined;
   readonly labelBounds?: Bounds;
   readonly style: ComputedRelationshipStyle;
 }

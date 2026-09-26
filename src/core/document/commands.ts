@@ -29,6 +29,9 @@ export interface BoundaryTimerSettings {
   };
 }
 
+export type ConnectionDock = "top" | "right" | "bottom" | "left";
+export type ConnectionEndpoint = "source" | "target";
+
 export type PresentationCommand =
   | { readonly type: "edit-metadata"; readonly edits: readonly MetadataEdit[] }
   | {
@@ -64,6 +67,12 @@ export type PresentationCommand =
       readonly type: "set-spacing";
       readonly spacing: "node" | "layer";
       readonly value: number;
+    }
+  | {
+      readonly type: "set-dock";
+      readonly elementId: string;
+      readonly endpoint: ConnectionEndpoint;
+      readonly dock: ConnectionDock | undefined;
     }
   | {
       readonly type: "use-automatic-position";

@@ -224,6 +224,22 @@ export function editStructure(
       )
         throw new Error("Choose existing connection endpoints.");
       const old = relationships.find((item) => item.id === edit.id);
+      if (edit.source === edit.target)
+        throw new Error("A connection cannot reconnect a node to itself.");
+      if (
+        old &&
+        old.identity.kind !== "authored" &&
+        relationships.some(
+          (item) =>
+            item.id !== old.id &&
+            item.source === edit.source &&
+            item.target === edit.target &&
+            item.kind === edit.kind,
+        )
+      )
+        throw new Error(
+          "Add an authored connection ID before reconnecting to a parallel connection.",
+        );
       if (edit.authoredId) {
         identifier(edit.authoredId);
         if (
@@ -302,12 +318,30 @@ export function editStructure(
     | undefined;
   for (const old of model.relationships) {
     const next = relationships.find((item) => item.id === old.id);
+    const changedEndpoints = next
+      ? (["source", "target"] as const).filter(
+          (endpoint) => old[endpoint] !== next[endpoint],
+        )
+      : [];
     if (old.identity.kind === "authored") {
       if (!next)
         metadataEdits.push({
           type: "remove",
           path: ["elements", "relationships", "byId", old.identity.id],
         });
+      else
+        for (const endpoint of changedEndpoints)
+          metadataEdits.push({
+            type: "remove",
+            path: [
+              "elements",
+              "relationships",
+              "byId",
+              old.identity.id,
+              "docks",
+              endpoint,
+            ],
+          });
     } else {
       edgeSettings?.byEndpoints?.forEach((entry, index) => {
         if (
@@ -321,11 +355,18 @@ export function editStructure(
           old.identity.kind === "matcher"
         ) {
           const { match: _match, ...settings } = entry;
+          const docks = {
+            ...(settings as { docks?: Record<string, unknown> }).docks,
+          };
+          for (const endpoint of changedEndpoints) delete docks[endpoint];
+          const migrated = { ...settings } as Record<string, unknown>;
+          if (Object.keys(docks).length > 0) migrated.docks = docks;
+          else delete migrated.docks;
           metadataEdits.push(
             {
               type: "set",
               path: ["elements", "relationships", "byId", next.identity.id],
-              value: settings as import("../core/metadata/types").MetadataValue,
+              value: migrated as import("../core/metadata/types").MetadataValue,
             },
             {
               type: "remove",
@@ -356,6 +397,19 @@ export function editStructure(
                 path: ["elements", "relationships", "byEndpoints", index],
               },
         );
+        if (next)
+          for (const endpoint of changedEndpoints)
+            metadataEdits.push({
+              type: "remove",
+              path: [
+                "elements",
+                "relationships",
+                "byEndpoints",
+                index,
+                "docks",
+                endpoint,
+              ],
+            });
       });
     }
   }

@@ -308,7 +308,7 @@ export function renderMermaidSvg(
       const start = relationship.points[0];
       const messageStart =
         messageFlow && start
-          ? `<circle cx="${start.x}" cy="${start.y}" r="4" fill="#ffffff" stroke="${color}" stroke-width="1.5"/>`
+          ? `<circle class="message-flow-start" cx="${start.x}" cy="${start.y}" r="4" fill="#ffffff" stroke="${color}" stroke-width="1.5"/>`
           : "";
       const hitArea = options.interactive
         ? `<path class="relationship-hit-area" d="${path(relationship.points)}" fill="none" stroke="transparent" stroke-width="24" vector-effect="non-scaling-stroke" pointer-events="stroke"/>`
@@ -331,6 +331,15 @@ export function renderMermaidSvg(
       return `<g class="node${selected}" data-element-id="${escapeAttribute(node.id)}"${node.notation ? ` data-notation="${node.notation}"` : ""}>${nodeShape(node, node.style)}${nodeLabel}</g>`;
     })
     .join("");
+  const selectedRelationship = scene.relationships.find(
+    (relationship) => relationship.id === selection,
+  );
+  const selectedStart = selectedRelationship?.points[0];
+  const selectedEnd = selectedRelationship?.points.at(-1);
+  const endpointHandles =
+    options.interactive && selectedRelationship && selectedStart && selectedEnd
+      ? `<g class="connection-endpoints" data-element-id="${escapeAttribute(selectedRelationship.id)}"><circle class="connection-endpoint-handle" data-endpoint="source" aria-label="Move source endpoint" cx="${selectedStart.x}" cy="${selectedStart.y}" r="8" fill="#ffffff" stroke="#2563eb" stroke-width="2" vector-effect="non-scaling-stroke"/><circle class="connection-endpoint-handle" data-endpoint="target" aria-label="Move target endpoint" cx="${selectedEnd.x}" cy="${selectedEnd.y}" r="8" fill="#ffffff" stroke="#2563eb" stroke-width="2" vector-effect="non-scaling-stroke"/></g>`
+      : "";
   const outdated = options.outdated
     ? `<g class="outdated"><rect x="12" y="12" width="142" height="30" rx="15"/><text x="83" y="32" text-anchor="middle">Preview out of date</text></g>`
     : "";
@@ -340,7 +349,7 @@ export function renderMermaidSvg(
   const selectedPath = options.interactive
     ? ".selected>path:not(.relationship-hit-area)"
     : ".selected>path";
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,${selectedPath}{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}</style>${groups}${relationships}${nodes}${outdated}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,${selectedPath}{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}</style>${groups}${relationships}${nodes}${endpointHandles}${outdated}</svg>`;
 }
 
 export const renderMermaidPreviewSvg = renderMermaidSvg;

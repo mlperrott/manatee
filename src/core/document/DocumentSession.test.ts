@@ -42,6 +42,7 @@ function snapshot(source: string): MermaidDocumentSnapshot {
         "set-attribute": { state: "inapplicable" },
         "create-styling-rule": { state: "inapplicable" },
         "set-spacing": { state: "inapplicable" },
+        "set-dock": { state: "inapplicable" },
         "use-automatic-position": { state: "inapplicable" },
         "reset-layout": { state: "inapplicable" },
         "cleanup-unmatched": { state: "inapplicable" },

@@ -343,6 +343,8 @@ export class MermaidDocument {
             value: command.value,
           },
         ]);
+      case "set-dock":
+        return await this.#edit(this.#dockEdits(command));
       case "use-automatic-position":
         return await this.#edit(
           this.#automaticPositionEdits(command.elementId),
@@ -878,6 +880,90 @@ export class MermaidDocument {
     ];
   }
 
+  #dockEdits(
+    command: Extract<PresentationCommand, { type: "set-dock" }>,
+  ): MetadataEdit[] {
+    const relationship = this.snapshot().model!.relationships.find(
+      ({ id }) => id === command.elementId,
+    );
+    if (!relationship || relationship.identity.kind === "ambiguous") {
+      throw new CommandUnavailableError(
+        "set-dock",
+        "This connection needs a unique authored identity before its docks can be changed.",
+      );
+    }
+    const endpointId = relationship[command.endpoint];
+    if (!this.snapshot().model!.nodes.some(({ id }) => id === endpointId)) {
+      throw new CommandUnavailableError(
+        "set-dock",
+        "Dock locks apply only to connection endpoints attached to nodes.",
+      );
+    }
+    if (relationship.identity.kind === "authored") {
+      const path = [
+        "elements",
+        "relationships",
+        "byId",
+        relationship.identity.id,
+        "docks",
+        command.endpoint,
+      ] as const;
+      return [
+        command.dock === undefined
+          ? { type: "remove", path }
+          : { type: "set", path, value: command.dock },
+      ];
+    }
+    const relationships = metadataRecord(
+      metadataRecord(metadataRecord(this.snapshot().metadata).elements)
+        .relationships,
+    );
+    const entries = Array.isArray(relationships.byEndpoints)
+      ? relationships.byEndpoints
+      : [];
+    const index = entries.findIndex((entry) => {
+      const match = metadataRecord(metadataRecord(entry).match);
+      return (
+        match.source === relationship.source &&
+        match.target === relationship.target &&
+        match.kind === relationship.kind
+      );
+    });
+    if (index < 0 && command.dock === undefined) return [];
+    const entryIndex = index < 0 ? entries.length : index;
+    const base = [
+      "elements",
+      "relationships",
+      "byEndpoints",
+      entryIndex,
+    ] as const;
+    return [
+      ...(index < 0
+        ? [
+            {
+              type: "set" as const,
+              path: [...base, "match"],
+              value: {
+                source: relationship.source,
+                target: relationship.target,
+                kind: relationship.kind,
+              },
+            },
+          ]
+        : []),
+      command.dock === undefined
+        ? {
+            type: "remove" as const,
+            path: [...base, "docks", command.endpoint],
+          }
+        : {
+            type: "set" as const,
+            path: [...base, "docks", command.endpoint],
+            value: command.dock,
+          },
+    ];
+  }
+
   #positionPath(elementId: string): readonly string[] {
     const model = this.snapshot().model!;
     if (model.nodes.some(({ id }) => id === elementId)) {
@@ -906,9 +992,33 @@ export class MermaidDocument {
 
   #resetLayoutEdits(): MetadataEdit[] {
     const model = this.snapshot().model!;
-    return [...model.nodes, ...model.groups].flatMap(({ id }) =>
+    const edits = [...model.nodes, ...model.groups].flatMap(({ id }) =>
       this.#automaticPositionEdits(id),
     );
+    const relationships = metadataRecord(
+      metadataRecord(metadataRecord(this.snapshot().metadata).elements)
+        .relationships,
+    );
+    for (const id of Object.keys(metadataRecord(relationships.byId))) {
+      if (
+        metadataRecord(metadataRecord(relationships.byId)[id]).docks !==
+        undefined
+      )
+        edits.push({
+          type: "remove",
+          path: ["elements", "relationships", "byId", id, "docks"],
+        });
+    }
+    if (Array.isArray(relationships.byEndpoints)) {
+      relationships.byEndpoints.forEach((entry, index) => {
+        if (metadataRecord(entry).docks !== undefined)
+          edits.push({
+            type: "remove",
+            path: ["elements", "relationships", "byEndpoints", index, "docks"],
+          });
+      });
+    }
+    return edits;
   }
 
   #unmatched() {
@@ -966,6 +1076,7 @@ export class MermaidDocument {
         "set-attribute": unavailable,
         "create-styling-rule": unavailable,
         "set-spacing": unavailable,
+        "set-dock": unavailable,
         "use-automatic-position": unavailable,
         "reset-layout": unavailable,
         "cleanup-unmatched": unavailable,
@@ -1018,6 +1129,14 @@ export class MermaidDocument {
       "set-attribute": node ? available : selectReason,
       "create-styling-rule": available,
       "set-spacing": available,
+      "set-dock":
+        relationship?.identity.kind === "ambiguous"
+          ? disabled(
+              "This connection needs an authored ID before its docks can be changed.",
+            )
+          : relationship
+            ? available
+            : selectReason,
       "use-automatic-position":
         node || group
           ? hasPosition
@@ -1112,7 +1231,7 @@ function valueAt(
 
 function hasAnyManualPosition(metadata: Record<string, unknown>): boolean {
   const elements = metadataRecord(metadata.elements);
-  return ["nodes", "groups", "lanes"].some((category) =>
+  const positioned = ["nodes", "groups", "lanes"].some((category) =>
     Object.values(metadataRecord(elements[category])).some(
       (entry) =>
         metadataRecord(entry).position !== undefined ||
@@ -1121,6 +1240,18 @@ function hasAnyManualPosition(metadata: Record<string, unknown>): boolean {
             "boundary-timer" &&
           metadataRecord(metadataRecord(entry).notation).anchor !== undefined),
     ),
+  );
+  const relationships = metadataRecord(elements.relationships);
+  const identified = Object.values(metadataRecord(relationships.byId));
+  const matched = Array.isArray(relationships.byEndpoints)
+    ? relationships.byEndpoints
+    : [];
+  return (
+    positioned ||
+    [...identified, ...matched].some(
+      (entry) =>
+        Object.keys(metadataRecord(metadataRecord(entry).docks)).length > 0,
+    )
   );
 }
 

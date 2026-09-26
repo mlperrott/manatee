@@ -1,5 +1,16 @@
 import type { Bounds, Point } from "./types";
 import { segmentIntersects } from "./labels";
+import type { ConnectionDock } from "../../core/document/commands";
+
+export interface RouteOptions {
+  readonly sourceDock?: ConnectionDock | undefined;
+  readonly targetDock?: ConnectionDock | undefined;
+}
+
+export interface RouteResult {
+  readonly points: Point[];
+  readonly blocked: boolean;
+}
 
 function directRoute(source: Bounds, target: Bounds): Point[] {
   const sourceCenter = {
@@ -39,9 +50,13 @@ function directRoute(source: Bounds, target: Bounds): Point[] {
   return [start, { x: start.x, y: middleY }, { x: end.x, y: middleY }, end];
 }
 
-function ports(bounds: Bounds): { point: Point; outside: Point }[] {
+function ports(
+  bounds: Bounds,
+  selected?: ConnectionDock,
+): { side: ConnectionDock; point: Point; outside: Point }[] {
   return [
     {
+      side: "right" as const,
       point: { x: bounds.x + bounds.width, y: bounds.y + bounds.height / 2 },
       outside: {
         x: bounds.x + bounds.width + 4,
@@ -49,10 +64,12 @@ function ports(bounds: Bounds): { point: Point; outside: Point }[] {
       },
     },
     {
+      side: "left" as const,
       point: { x: bounds.x, y: bounds.y + bounds.height / 2 },
       outside: { x: bounds.x - 4, y: bounds.y + bounds.height / 2 },
     },
     {
+      side: "bottom" as const,
       point: { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height },
       outside: {
         x: bounds.x + bounds.width / 2,
@@ -60,10 +77,11 @@ function ports(bounds: Bounds): { point: Point; outside: Point }[] {
       },
     },
     {
+      side: "top" as const,
       point: { x: bounds.x + bounds.width / 2, y: bounds.y },
       outside: { x: bounds.x + bounds.width / 2, y: bounds.y - 4 },
     },
-  ];
+  ].filter(({ side }) => selected === undefined || side === selected);
 }
 
 function simplify(points: readonly Point[]): Point[] {
@@ -85,11 +103,12 @@ function simplify(points: readonly Point[]): Point[] {
 
 /** Keep the short route when clear, otherwise choose an orthogonal detour
  * around process symbols and labels, docking on the actual symbol boundary. */
-export function route(
+export function routeWithStatus(
   source: Bounds,
   target: Bounds,
   obstacles: readonly Bounds[],
-): Point[] {
+  options: RouteOptions = {},
+): RouteResult {
   const direct = directRoute(source, target);
   const blocked = obstacles.length
     ? [
@@ -113,7 +132,12 @@ export function route(
           ).length,
         0,
       );
-  if (crossings(direct) === 0) return direct;
+  if (
+    options.sourceDock === undefined &&
+    options.targetDock === undefined &&
+    crossings(direct) === 0
+  )
+    return { points: direct, blocked: false };
   const score = (points: readonly Point[]) =>
     crossings(points) * 10000 +
     points
@@ -127,8 +151,11 @@ export function route(
       ) +
     points.length * 8 +
     (points.some((point) => point.x < 0 || point.y < 0) ? 100000 : 0);
-  let best = direct,
-    bestScore = score(direct);
+  let best =
+      options.sourceDock === undefined && options.targetDock === undefined
+        ? direct
+        : undefined,
+    bestScore = best ? score(best) : Infinity;
   const consider = (points: Point[]) => {
     const candidate = simplify(points),
       value = score(candidate);
@@ -137,8 +164,8 @@ export function route(
       bestScore = value;
     }
   };
-  for (const a of ports(source))
-    for (const b of ports(target)) {
+  for (const a of ports(source, options.sourceDock))
+    for (const b of ports(target, options.targetDock)) {
       const x = (a.outside.x + b.outside.x) / 2,
         y = (a.outside.y + b.outside.y) / 2;
       for (const middle of [
@@ -156,9 +183,9 @@ export function route(
         consider([a.point, a.outside, ...middle, b.outside, b.point]);
     }
   // Unusual manual placement may need a corridor beside another obstacle.
-  if (crossings(best) > 0) {
-    for (const a of ports(source))
-      for (const b of ports(target))
+  if (best && crossings(best) > 0) {
+    for (const a of ports(source, options.sourceDock))
+      for (const b of ports(target, options.targetDock))
         for (const obstacle of blocked) {
           for (const x of [obstacle.x - 12, obstacle.x + obstacle.width + 12])
             consider([
@@ -180,5 +207,15 @@ export function route(
             ]);
         }
   }
-  return best;
+  const points = best ?? direct;
+  return { points, blocked: crossings(points) > 0 };
+}
+
+export function route(
+  source: Bounds,
+  target: Bounds,
+  obstacles: readonly Bounds[],
+  options: RouteOptions = {},
+): Point[] {
+  return routeWithStatus(source, target, obstacles, options).points;
 }

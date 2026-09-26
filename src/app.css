@@ -696,6 +696,64 @@ button:disabled {
   cursor: pointer;
 }
 
+.mermaid-surface .connection-endpoint-handle {
+  cursor: crosshair;
+  pointer-events: all;
+  touch-action: none;
+}
+
+.mermaid-surface .alignment-guide {
+  stroke: #0f766e;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.mermaid-surface .dock-target {
+  fill: #ffffff;
+  stroke: #2563eb;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.mermaid-surface .dock-target.is-active {
+  fill: #2563eb;
+  stroke: #ffffff;
+  stroke-width: 3;
+}
+
+.mermaid-surface .reconnect-target {
+  fill: rgb(37 99 235 / 6%);
+  stroke: #2563eb;
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+  vector-effect: non-scaling-stroke;
+}
+
+.mermaid-surface .reconnect-target.is-active {
+  fill: rgb(37 99 235 / 18%);
+  stroke-width: 3;
+}
+
+.mermaid-surface .reconnect-target.is-disabled {
+  fill: rgb(100 116 139 / 5%);
+  stroke: #94a3b8;
+  stroke-dasharray: 3 4;
+}
+
+.mermaid-surface .reconnect-target-label {
+  fill: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: #ffffff;
+  stroke-width: 3px;
+}
+
+.mermaid-surface .reconnect-target-label.is-disabled {
+  fill: #64748b;
+}
+
 .canvas-loading {
   position: absolute;
   inset: 0;

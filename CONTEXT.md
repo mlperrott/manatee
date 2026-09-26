@@ -22,7 +22,23 @@ Manatee presents Mermaid-authored diagrams for technical discussions and managem
 
 **Automatic layout**: The placement computed for diagram elements that do not have manual positions.
 
-**Reset layout**: The editor action that returns diagram placement to automatic layout.
+**Reset layout**: The editor action that clears manual positions and dock locks, then recomputes automatic placement and connection routing.
+
+**Routing dogleg**: An unnecessary pair of short bends in an automatically routed connection, usually caused when connected diagram elements are almost but not exactly aligned.
+_Avoid_: Kink
+
+**Alignment snap**: The editor behaviour that brings a dragged node's centreline into exact alignment with a directly connected node to prevent a routing dogleg.
+_Avoid_: Snap to grid, grid snapping
+
+**Connection dock**: One of the four side-centre points—north, east, south or west—where a connection endpoint meets a node.
+_Avoid_: Cardinal point, port
+
+**Dock lock**: A presentation override that requires one connection endpoint to use a chosen connection dock without changing which nodes the connection relates. Routing retains the chosen dock even when it cannot find a clean path.
+
+**Automatic docking**: Connection routing in which Manatee chooses the connection dock for an endpoint.
+_Avoid_: Auto select
+
+**Reconnect**: An authoring change that moves a connection endpoint to a different node, changing the semantic source.
 
 **Node attribute**: A named value associated with a node, such as its status, that can be used to determine its presentation.
 

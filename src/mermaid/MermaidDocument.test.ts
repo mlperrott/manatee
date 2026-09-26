@@ -443,6 +443,72 @@ A --> B
     relationship.dispose();
   });
 
+  it("persists dock locks, clears a reconnected endpoint, and resets routing", async () => {
+    const document = new MermaidDocument();
+    const opened = await document.open(`flowchart LR
+A e1@--> B
+C[Third]
+`);
+    const edge = opened.model!.relationships[0]!;
+    await document.execute({
+      type: "set-dock",
+      elementId: edge.id,
+      endpoint: "source",
+      dock: "top",
+    });
+    const locked = await document.execute({
+      type: "set-dock",
+      elementId: edge.id,
+      endpoint: "target",
+      dock: "left",
+    });
+    expect(locked.snapshot.metadata).toMatchObject({
+      elements: {
+        relationships: {
+          byId: { e1: { docks: { source: "top", target: "left" } } },
+        },
+      },
+    });
+    const reconnected = await document.execute({
+      type: "edit-structure",
+      edit: {
+        action: "relationship",
+        ...edge,
+        authoredId: "e1",
+        target: "C",
+      },
+    });
+    expect(reconnected.snapshot.source).toContain("A e1@--> C");
+    expect(reconnected.snapshot.metadata).toMatchObject({
+      elements: {
+        relationships: { byId: { e1: { docks: { source: "top" } } } },
+      },
+    });
+    expect(
+      (
+        (reconnected.snapshot.metadata!.elements as Record<string, unknown>)
+          .relationships as {
+          byId: { e1: { docks: Record<string, unknown> } };
+        }
+      ).byId.e1.docks.target,
+    ).toBeUndefined();
+    const undone = await document.execute({ type: "undo" });
+    expect(undone.snapshot.source).toContain("A e1@--> B");
+    expect(undone.snapshot.metadata).toMatchObject({
+      elements: {
+        relationships: {
+          byId: { e1: { docks: { source: "top", target: "left" } } },
+        },
+      },
+    });
+    const redone = await document.execute({ type: "redo" });
+    expect(redone.snapshot.source).toContain("A e1@--> C");
+    const reset = await document.execute({ type: "reset-layout" });
+    expect(JSON.stringify(reset.snapshot.metadata)).not.toContain('"docks"');
+    expect(reset.snapshot.commands.undo).toBe(true);
+    document.dispose();
+  });
+
   it("converts nested canvas movement to a container-local manual position", async () => {
     const document = new MermaidDocument();
     await document.open(`---

@@ -192,7 +192,16 @@
       "properties": {
         "style": { "$ref": "#/$defs/relationshipLineStyle" },
         "text": { "$ref": "#/$defs/textStyle" },
-        "notation": { "$ref": "#/$defs/relationshipNotation" }
+        "notation": { "$ref": "#/$defs/relationshipNotation" },
+        "docks": { "$ref": "#/$defs/connectionDocks" }
+      },
+      "additionalProperties": true
+    },
+    "connectionDocks": {
+      "type": "object",
+      "properties": {
+        "source": { "enum": ["top", "right", "bottom", "left"] },
+        "target": { "enum": ["top", "right", "bottom", "left"] }
       },
       "additionalProperties": true
     },
@@ -213,7 +222,8 @@
         "match": { "$ref": "#/$defs/relationshipMatcher" },
         "style": { "$ref": "#/$defs/relationshipLineStyle" },
         "text": { "$ref": "#/$defs/textStyle" },
-        "notation": { "$ref": "#/$defs/relationshipNotation" }
+        "notation": { "$ref": "#/$defs/relationshipNotation" },
+        "docks": { "$ref": "#/$defs/connectionDocks" }
       },
       "additionalProperties": true
     },

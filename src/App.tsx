@@ -1018,6 +1018,41 @@ function Studio() {
                 onNudge={(elementId, dx, dy) =>
                   void execute({ type: "move", elementId, dx, dy })
                 }
+                sourceEditing={snapshot()?.sourceEditing !== false}
+                onSetDock={(elementId, endpoint, dock) =>
+                  void execute({
+                    type: "set-dock",
+                    elementId,
+                    endpoint,
+                    dock,
+                  })
+                }
+                onReconnect={(elementId, endpoint, nodeId) => {
+                  const current = snapshot();
+                  const relationship = current?.model?.relationships.find(
+                    (candidate) => candidate.id === elementId,
+                  );
+                  if (!relationship || current?.sourceEditing === false) return;
+                  void execute({
+                    type: "edit-structure",
+                    edit: {
+                      action: "relationship",
+                      id: relationship.id,
+                      ...(relationship.identity.kind === "authored"
+                        ? { authoredId: relationship.identity.id }
+                        : {}),
+                      source:
+                        endpoint === "source" ? nodeId : relationship.source,
+                      target:
+                        endpoint === "target" ? nodeId : relationship.target,
+                      label: relationship.label,
+                      kind: relationship.kind,
+                      technology: relationship.technology,
+                      description: relationship.description,
+                      directionHint: relationship.directionHint,
+                    },
+                  });
+                }}
               />
             </Show>
           </Show>

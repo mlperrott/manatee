@@ -48,6 +48,10 @@ export function PresentationPanel(props: {
     id() ? boundaryTimerNotation(props.snapshot.metadata, id()!) : undefined;
   const node = () =>
     props.snapshot.model?.nodes.find((item) => item.id === id());
+  const relationship = () =>
+    props.snapshot.model?.relationships.find((item) => item.id === id());
+  const layoutRelationship = () =>
+    props.snapshot.scene?.relationships.find((item) => item.id === id());
   const [attributeName, setAttributeName] = createSignal("");
   const [attributeValue, setAttributeValue] = createSignal<
     string | number | boolean
@@ -100,6 +104,15 @@ export function PresentationPanel(props: {
   });
   return (
     <div class="presentation-panel">
+      <Show when={relationship() && !target()}>
+        <fieldset>
+          <legend>Connection docking</legend>
+          <p class="field-help">
+            Add an authored connection ID in Create and edit structure before
+            locking either endpoint to a dock.
+          </p>
+        </fieldset>
+      </Show>
       <Show when={target()}>
         <fieldset disabled={!props.snapshot.commands.visualEditing}>
           <legend>Appearance</legend>
@@ -128,6 +141,59 @@ export function PresentationPanel(props: {
             Reset appearance
           </button>
         </fieldset>
+        <Show when={edge()}>
+          <fieldset
+            disabled={
+              props.snapshot.commands.presentation["set-dock"].state !==
+              "available"
+            }
+          >
+            <legend>Connection docking</legend>
+            {(["source", "target"] as const).map((endpoint) => (
+              <label>
+                {endpoint === "source" ? "Source dock" : "Target dock"}
+                <select
+                  aria-label={
+                    endpoint === "source" ? "Source dock" : "Target dock"
+                  }
+                  value={
+                    (endpoint === "source"
+                      ? layoutRelationship()?.sourceDock
+                      : layoutRelationship()?.targetDock) ?? "auto"
+                  }
+                  disabled={
+                    !props.snapshot.model?.nodes.some(
+                      (candidate) =>
+                        candidate.id === relationship()?.[endpoint],
+                    )
+                  }
+                  onChange={(event) =>
+                    void props.execute({
+                      type: "set-dock",
+                      elementId: id()!,
+                      endpoint,
+                      dock:
+                        event.currentTarget.value === "auto"
+                          ? undefined
+                          : (event.currentTarget.value as
+                              "top" | "right" | "bottom" | "left"),
+                    })
+                  }
+                >
+                  <option value="auto">Auto</option>
+                  <option value="top">North</option>
+                  <option value="right">East</option>
+                  <option value="bottom">South</option>
+                  <option value="left">West</option>
+                </select>
+              </label>
+            ))}
+            <p class="field-help">
+              Auto lets Manatee choose the dock. A chosen side remains locked
+              until changed here or Reset layout is used.
+            </p>
+          </fieldset>
+        </Show>
         <Show when={!edge()}>
           <fieldset disabled={!props.snapshot.commands.visualEditing}>
             <legend>Exact position</legend>
