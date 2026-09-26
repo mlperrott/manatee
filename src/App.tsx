@@ -2,6 +2,7 @@ import {
   createMemo,
   createSignal,
   createStore,
+  Errored,
   For,
   onSettled,
   Show,
@@ -130,7 +131,7 @@ function boundaryAttachmentOptions(
   );
 }
 
-export default function App() {
+function Studio() {
   // Choose a readable example for portrait phones without rewriting imported
   // documents or changing their semantic source on rotation.
   const exampleSource =
@@ -152,7 +153,10 @@ export default function App() {
   const [exportMessage, setExportMessage] = createSignal("");
   const [retiredSource, setRetiredSource] = createSignal<RetiredSource>();
   const repository = new IndexedDbDocumentRepository();
+  // Solid's bare-ref transform assigns these from ref={variable}.
+  // oxlint-disable-next-line no-unassigned-vars
   let stage: HTMLElement | undefined;
+  // oxlint-disable-next-line no-unassigned-vars
   let fileInput: HTMLInputElement | undefined;
   const fileHandles = new Map<string, FileSystemFileHandle>();
 
@@ -517,9 +521,7 @@ export default function App() {
             accept=".mmd,.mermaid,text/plain"
             aria-label="Choose diagram file"
             tabindex={-1}
-            ref={(element) => {
-              fileInput = element;
-            }}
+            ref={fileInput}
             onChange={(event) => {
               const file = event.currentTarget.files?.[0];
               if (file) {
@@ -739,9 +741,9 @@ export default function App() {
             <p>{example().notice}</p>
             <strong>Try it</strong>
             <ul>
-              {example().try.map((suggestion) => (
-                <li>{suggestion}</li>
-              ))}
+              <For each={example().try}>
+                {(suggestion) => <li>{suggestion}</li>}
+              </For>
             </ul>
           </details>
         )}
@@ -899,23 +901,19 @@ export default function App() {
             </div>
             <Show when={(snapshot()?.diagnostics.length ?? 0) > 0}>
               <ul class="diagnostics" aria-label="Document diagnostics">
-                {snapshot()?.diagnostics.map((item) => (
-                  <li data-severity={item.severity}>
-                    <strong>{item.severity}</strong>
-                    {item.message}
-                  </li>
-                ))}
+                <For each={snapshot()?.diagnostics}>
+                  {(item) => (
+                    <li data-severity={item.severity}>
+                      <strong>{item.severity}</strong>
+                      {item.message}
+                    </li>
+                  )}
+                </For>
               </ul>
             </Show>
           </aside>
         </Show>
-        <section
-          class="stage"
-          aria-label="Diagram canvas"
-          ref={(element) => {
-            stage = element;
-          }}
-        >
+        <section class="stage" aria-label="Diagram canvas" ref={stage}>
           <div class="stage-toolbar" aria-label="Canvas controls">
             <span class="stage-toolbar__label">
               Canvas{" "}
@@ -1164,17 +1162,22 @@ export default function App() {
                       }}
                     >
                       <option value="">Ordinary Mermaid</option>
-                      {notationOptions(snapshot()).map(([value, label]) => (
-                        <option
-                          value={value}
-                          disabled={
-                            value === "boundary-timer" &&
-                            boundaryAttachments().length === 0
-                          }
-                        >
-                          {label}
-                        </option>
-                      ))}
+                      <For
+                        each={notationOptions(snapshot())}
+                        keyed={(option) => option[0]}
+                      >
+                        {(option) => (
+                          <option
+                            value={option()[0]}
+                            disabled={
+                              option()[0] === "boundary-timer" &&
+                              boundaryAttachments().length === 0
+                            }
+                          >
+                            {option()[1]}
+                          </option>
+                        )}
+                      </For>
                     </select>
                   </label>
                   <Show
@@ -1217,11 +1220,16 @@ export default function App() {
                           }
                         }}
                       >
-                        {boundaryAttachments().map((attachment) => (
-                          <option value={attachment.id}>
-                            {attachment.label}
-                          </option>
-                        ))}
+                        <For
+                          each={boundaryAttachments()}
+                          keyed={(attachment) => attachment.id}
+                        >
+                          {(attachment) => (
+                            <option value={attachment().id}>
+                              {attachment().label}
+                            </option>
+                          )}
+                        </For>
                       </select>
                     </label>
                   </Show>
@@ -1324,5 +1332,24 @@ export default function App() {
         ))}
       </nav>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Errored
+      fallback={(error, reset) => (
+        <main class="app-failure" role="alert">
+          <span class="eyebrow">Manatee stopped unexpectedly</span>
+          <h1>The diagram studio could not continue.</h1>
+          <p>{String(error())}</p>
+          <button class="button button--primary" type="button" onClick={reset}>
+            Try again
+          </button>
+        </main>
+      )}
+    >
+      <Studio />
+    </Errored>
   );
 }

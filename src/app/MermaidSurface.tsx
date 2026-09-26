@@ -194,6 +194,8 @@ function updateRelationshipPreview(
 }
 
 export function MermaidSurface(props: MermaidSurfaceProps) {
+  // Assigned by Solid's bare-ref transform from ref={container}.
+  // oxlint-disable-next-line no-unassigned-vars
   let container: HTMLDivElement | undefined;
   const [size, setSize] = createSignal({ width: 0, height: 0 });
   let drag:
@@ -261,9 +263,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
   return (
     <div
       class="diagram-surface mermaid-surface"
-      ref={(element) => {
-        container = element;
-      }}
+      ref={container}
       role="application"
       aria-label="Interactive Mermaid diagram"
       aria-disabled={props.disabled ? "true" : "false"}

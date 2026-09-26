@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createMemo, createSignal, For, Show, untrack } from "solid-js";
 import type {
   MetadataEdit,
   MetadataPathPart,
@@ -87,7 +87,9 @@ function RuleEditor(props: {
   save: (rule: MetadataValue) => void;
   cancel: () => void;
 }) {
-  const match = record(props.initial.match);
+  // The keyed editor owns a draft of the rule at the moment it opens.
+  const initial = untrack(() => props.initial);
+  const match = record(initial.match);
   const [id, setId] = createSignal(String(match.id ?? ""));
   const [classes, setClasses] = createSignal(
     Array.isArray(match.classes) ? match.classes.join(", ") : "",
@@ -105,7 +107,7 @@ function RuleEditor(props: {
       };
     }),
   );
-  const [style, setStyle] = createSignal(record(props.initial.style));
+  const [style, setStyle] = createSignal(record(initial.style));
   const [error, setError] = createSignal("");
   const update = (index: number, changes: Partial<Condition>) =>
     setConditions((items) =>
@@ -150,7 +152,7 @@ function RuleEditor(props: {
           return;
         }
         props.save({
-          ...props.initial,
+          ...initial,
           match: matcher,
           style: style(),
         } as MetadataValue);
@@ -176,130 +178,141 @@ function RuleEditor(props: {
       <p class="field-help">
         All conditions must match. Classes are separated by commas.
       </p>
-      {conditions().map((condition, index) => (
-        <div class="condition-card">
-          <label>
-            Attribute
-            <input
-              aria-label={`Condition ${index + 1} attribute`}
-              value={condition.name}
-              onChange={(event) =>
-                update(index, { name: event.currentTarget.value })
-              }
-            />
-          </label>
-          <label>
-            Condition
-            <select
-              aria-label={`Condition ${index + 1} operator`}
-              value={condition.operator}
-              onChange={(event) => {
-                const operator = event.currentTarget.value;
-                update(index, {
-                  operator,
-                  values:
-                    operator === "exists"
-                      ? [true]
-                      : ["gt", "gte", "lt", "lte"].includes(operator)
-                        ? [0]
-                        : condition.values,
-                });
-              }}
-            >
-              {[
-                ["eq", "Equals"],
-                ["in", "Is one of"],
-                ["gt", "Greater than"],
-                ["gte", "At least"],
-                ["lt", "Less than"],
-                ["lte", "At most"],
-                ["exists", "Exists"],
-              ].map(([value, label]) => (
-                <option value={value}>{label}</option>
-              ))}
-            </select>
-          </label>
-          <Show
-            when={condition.operator === "eq" || condition.operator === "in"}
-            fallback={
-              <label>
-                Comparison value
-                <input
-                  aria-label={`Condition ${index + 1} value`}
-                  type={condition.operator === "exists" ? "checkbox" : "number"}
-                  step="any"
-                  checked={Boolean(condition.values[0])}
-                  value={String(condition.values[0])}
-                  onChange={(event) =>
-                    update(index, {
-                      values: [
-                        condition.operator === "exists"
-                          ? event.currentTarget.checked
-                          : Number(event.currentTarget.value),
-                      ],
-                    })
-                  }
-                />
-              </label>
-            }
-          >
-            {(condition.operator === "in"
-              ? condition.values
-              : condition.values.slice(0, 1)
-            ).map((value, valueIndex) => (
-              <div>
-                <ScalarField
-                  label={`Condition ${index + 1} value ${valueIndex + 1}`}
-                  value={value}
-                  change={(next) =>
-                    update(index, {
-                      values: condition.values.map((item, i) =>
-                        i === valueIndex ? next : item,
-                      ),
-                    })
-                  }
-                />
-                <Show
-                  when={
-                    condition.operator === "in" && condition.values.length > 1
-                  }
-                >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      update(index, {
-                        values: condition.values.filter(
-                          (_, i) => i !== valueIndex,
-                        ),
+      <For each={conditions()}>
+        {(condition, index) => (
+          <div class="condition-card">
+            <label>
+              Attribute
+              <input
+                aria-label={`Condition ${index() + 1} attribute`}
+                value={condition.name}
+                onChange={(event) =>
+                  update(index(), { name: event.currentTarget.value })
+                }
+              />
+            </label>
+            <label>
+              Condition
+              <select
+                aria-label={`Condition ${index() + 1} operator`}
+                value={condition.operator}
+                onChange={(event) => {
+                  const operator = event.currentTarget.value;
+                  update(index(), {
+                    operator,
+                    values:
+                      operator === "exists"
+                        ? [true]
+                        : ["gt", "gte", "lt", "lte"].includes(operator)
+                          ? [0]
+                          : condition.values,
+                  });
+                }}
+              >
+                {[
+                  ["eq", "Equals"],
+                  ["in", "Is one of"],
+                  ["gt", "Greater than"],
+                  ["gte", "At least"],
+                  ["lt", "Less than"],
+                  ["lte", "At most"],
+                  ["exists", "Exists"],
+                ].map(([value, label]) => (
+                  <option value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <Show
+              when={condition.operator === "eq" || condition.operator === "in"}
+              fallback={
+                <label>
+                  Comparison value
+                  <input
+                    aria-label={`Condition ${index() + 1} value`}
+                    type={
+                      condition.operator === "exists" ? "checkbox" : "number"
+                    }
+                    step="any"
+                    checked={Boolean(condition.values[0])}
+                    value={String(condition.values[0])}
+                    onChange={(event) =>
+                      update(index(), {
+                        values: [
+                          condition.operator === "exists"
+                            ? event.currentTarget.checked
+                            : Number(event.currentTarget.value),
+                        ],
                       })
                     }
-                  >
-                    Remove value
-                  </button>
-                </Show>
-              </div>
-            ))}
-            <Show when={condition.operator === "in"}>
-              <button
-                type="button"
-                onClick={() =>
-                  update(index, { values: [...condition.values, ""] })
+                  />
+                </label>
+              }
+            >
+              <For
+                each={
+                  condition.operator === "in"
+                    ? condition.values
+                    : condition.values.slice(0, 1)
                 }
+                keyed={false}
               >
-                Add value
-              </button>
+                {(value, valueIndex) => (
+                  <div>
+                    <ScalarField
+                      label={`Condition ${index() + 1} value ${valueIndex + 1}`}
+                      value={value()}
+                      change={(next) =>
+                        update(index(), {
+                          values: condition.values.map((item, i) =>
+                            i === valueIndex ? next : item,
+                          ),
+                        })
+                      }
+                    />
+                    <Show
+                      when={
+                        condition.operator === "in" &&
+                        condition.values.length > 1
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          update(index(), {
+                            values: condition.values.filter(
+                              (_, i) => i !== valueIndex,
+                            ),
+                          })
+                        }
+                      >
+                        Remove value
+                      </button>
+                    </Show>
+                  </div>
+                )}
+              </For>
+              <Show when={condition.operator === "in"}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    update(index(), { values: [...condition.values, ""] })
+                  }
+                >
+                  Add value
+                </button>
+              </Show>
             </Show>
-          </Show>
-          <button
-            type="button"
-            onClick={() =>
-              setConditions((items) => items.filter((_, i) => i !== index))
-            }
-          >
-            Remove condition
-          </button>
-        </div>
-      ))}
+            <button
+              type="button"
+              onClick={() =>
+                setConditions((items) => items.filter((_, i) => i !== index()))
+              }
+            >
+              Remove condition
+            </button>
+          </div>
+        )}
+      </For>
       <button
         type="button"
         onClick={() =>
@@ -334,10 +347,11 @@ export function RulesPanel(props: {
   disabled: boolean;
   edit: (edits: readonly MetadataEdit[]) => Promise<boolean>;
 }) {
-  const rules = () =>
+  const rules = createMemo(() =>
     Array.isArray(props.rules)
       ? (props.rules as Record<string, unknown>[])
-      : [];
+      : [],
+  );
   const [editing, setEditing] = createSignal<{
     index: number;
     rule: Record<string, unknown>;
@@ -359,49 +373,54 @@ export function RulesPanel(props: {
         individual overrides take priority.
       </p>
       <ol class="rule-list">
-        {rules().map((rule, index) => (
-          <li>
-            <strong>Rule {index + 1}</strong>
-            <span>
-              {Object.entries(record(rule.match))
-                .map(
-                  ([key, value]) =>
-                    `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
-                )
-                .join(" · ")}
-            </span>
-            <div class="studio-actions">
-              <button type="button" onClick={() => setEditing({ index, rule })}>
-                Edit rule {index + 1}
-              </button>
-              <button
-                type="button"
-                aria-label={`Move rule ${index + 1} up`}
-                disabled={index === 0 || !!editing()}
-                onClick={() => move(index, -1)}
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                aria-label={`Move rule ${index + 1} down`}
-                disabled={index === rules().length - 1 || !!editing()}
-                onClick={() => move(index, 1)}
-              >
-                ↓
-              </button>
-              <button
-                type="button"
-                disabled={!!editing()}
-                onClick={() =>
-                  void replace(rules().filter((_, i) => i !== index))
-                }
-              >
-                Delete rule {index + 1}
-              </button>
-            </div>
-          </li>
-        ))}
+        <For each={rules()} keyed={false}>
+          {(rule, index) => (
+            <li>
+              <strong>Rule {index + 1}</strong>
+              <span>
+                {Object.entries(record(rule().match))
+                  .map(
+                    ([key, value]) =>
+                      `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
+                  )
+                  .join(" · ")}
+              </span>
+              <div class="studio-actions">
+                <button
+                  type="button"
+                  onClick={() => setEditing({ index, rule: rule() })}
+                >
+                  Edit rule {index + 1}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Move rule ${index + 1} up`}
+                  disabled={index === 0 || !!editing()}
+                  onClick={() => move(index, -1)}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Move rule ${index + 1} down`}
+                  disabled={index === rules().length - 1 || !!editing()}
+                  onClick={() => move(index, 1)}
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  disabled={!!editing()}
+                  onClick={() =>
+                    void replace(rules().filter((_, i) => i !== index))
+                  }
+                >
+                  Delete rule {index + 1}
+                </button>
+              </div>
+            </li>
+          )}
+        </For>
       </ol>
       <button
         type="button"

@@ -4,6 +4,8 @@ export function ExamplesGallery(props: {
   open: (example: StudioExample) => void;
   close: () => void;
 }) {
+  // Assigned by Solid's bare-ref transform from ref={dialog}.
+  // oxlint-disable-next-line no-unassigned-vars
   let dialog: HTMLDialogElement | undefined;
   const [filter, setFilter] = createSignal("");
   const examples = createMemo(() => {
@@ -21,9 +23,7 @@ export function ExamplesGallery(props: {
   return (
     <dialog
       class="examples-gallery"
-      ref={(element) => {
-        dialog = element;
-      }}
+      ref={dialog}
       onCancel={props.close}
       aria-label="Example gallery"
     >
@@ -57,7 +57,7 @@ export function ExamplesGallery(props: {
       <div class="example-grid">
         <For each={examples()}>
           {(example) => (
-            <article class={`example-card example-card--${example.id}`}>
+            <article class={["example-card", `example-card--${example.id}`]}>
               <span class="eyebrow">{example.category}</span>
               <h3>{example.title}</h3>
               <p>{example.description}</p>

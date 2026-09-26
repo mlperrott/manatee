@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import type { MermaidDocumentSnapshot } from "../../mermaid";
 import { boundaryTimerNotation } from "../../mermaid/notation";
 import { contentOrigin } from "../../mermaid/layout/geometry";
@@ -53,6 +53,9 @@ export function PresentationPanel(props: {
     string | number | boolean
   >("");
   const [attributeError, setAttributeError] = createSignal("");
+  const attributes = createMemo(() =>
+    Object.entries(record(at(entry(), ["attributes"]))),
+  );
   const position = () => {
     const item = sceneItem();
     if (!item || !("x" in item)) return { x: 0, y: 0 };
@@ -66,7 +69,7 @@ export function PresentationPanel(props: {
       y: Number(saved.y ?? Math.max(0, item.y - origin.y)),
     };
   };
-  const unmatched = () => {
+  const unmatched = createMemo(() => {
     const model = props.snapshot.model;
     if (!model) return [];
     return findUnmatchedMetadata(props.snapshot.metadata, {
@@ -94,7 +97,7 @@ export function PresentationPanel(props: {
         ),
       ),
     }).edits;
-  };
+  });
   return (
     <div class="presentation-panel">
       <Show when={target()}>
@@ -213,8 +216,8 @@ export function PresentationPanel(props: {
         <Show when={node()}>
           <fieldset disabled={!props.snapshot.commands.visualEditing}>
             <legend>Node attributes</legend>
-            {Object.entries(record(at(entry(), ["attributes"]))).map(
-              ([name, value]) => (
+            <For each={attributes()}>
+              {([name, value]) => (
                 <div class="attribute-card">
                   <label>
                     Attribute name
@@ -260,8 +263,8 @@ export function PresentationPanel(props: {
                     Remove {name}
                   </button>
                 </div>
-              ),
-            )}
+              )}
+            </For>
             <label>
               New attribute name
               <input
@@ -367,14 +370,16 @@ export function PresentationPanel(props: {
             These settings are preserved for elements absent from the current
             Mermaid source. Remove only those you no longer need.
           </p>
-          {unmatched().map((item) => (
-            <div class="unused-setting">
-              <code>{item.path.join(" / ")}</code>
-              <button type="button" onClick={() => void edit([item])}>
-                Remove setting
-              </button>
-            </div>
-          ))}
+          <For each={unmatched()}>
+            {(item) => (
+              <div class="unused-setting">
+                <code>{item.path.join(" / ")}</code>
+                <button type="button" onClick={() => void edit([item])}>
+                  Remove setting
+                </button>
+              </div>
+            )}
+          </For>
           <button
             type="button"
             onClick={() => void props.execute({ type: "cleanup-unmatched" })}
