@@ -652,6 +652,67 @@ describe("Mermaid compatibility diagnostics", () => {
     expect(unsupported.source).toContain("shape: cloud");
   });
 
+  it("clears a selection removed by a successful source render", async () => {
+    const document = new MermaidDocument();
+    await document.open("flowchart TD\nstart[Start]\n");
+    await document.execute({ type: "select", elementId: "start" });
+
+    const replaced = await document.replaceSource(
+      "flowchart TD\nA[First]\nB[Second]\n",
+    );
+
+    expect(replaced.selectedElementId).toBeUndefined();
+    expect(replaced.selectedElementLabel).toBeUndefined();
+  });
+
+  it("adds a connection ID and presentation edit in one undo step", async () => {
+    const document = new MermaidDocument();
+    const opened = await document.open("flowchart TD\nA-->B\nA-->B\n");
+    const relationship = opened.model!.relationships[0]!;
+    expect(relationship.identity.kind).toBe("ambiguous");
+
+    const changed = await document.execute({
+      type: "identify-relationship",
+      elementId: relationship.id,
+      authoredId: "edge_1",
+      edits: [
+        {
+          type: "set",
+          path: [
+            "elements",
+            "relationships",
+            "byId",
+            "edge_1",
+            "style",
+            "color",
+          ],
+          value: "#123456",
+        },
+      ],
+    });
+
+    expect(changed.snapshot.source).toContain("edge_1@-->");
+    expect(changed.snapshot.scene!.relationships[0]!.style.color).toBe(
+      "#123456",
+    );
+    const undone = await document.execute({ type: "undo" });
+    expect(undone.snapshot.source).toBe("flowchart TD\nA-->B\nA-->B\n");
+  });
+
+  it("explains a missing node delimiter and points to the authored line", async () => {
+    const source = "flowchart TD\nA[Broken";
+    const snapshot = await new MermaidDocument().open(source);
+    const diagnostic = snapshot.diagnostics.find(
+      ({ code }) => code === "mermaid.parse",
+    );
+
+    expect(diagnostic?.message).toBe("Missing closing “]” in node A.");
+    expect(source.slice(diagnostic!.range!.start, diagnostic!.range!.end)).toBe(
+      "[Broken",
+    );
+    expect(diagnostic?.details).toBeTruthy();
+  });
+
   it("diagnoses ambiguous generated relationship identities", async () => {
     const snapshot = await new MermaidDocument().open(
       "flowchart LR\nA-->B\nA-->B",

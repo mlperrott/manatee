@@ -7,6 +7,11 @@ import {
   type StructureEdit,
 } from "../../mermaid/authoring";
 import type { DiagramDirection } from "../../mermaid/model";
+import {
+  connectionKindLabels,
+  directionLabels,
+  flowShapeLabels,
+} from "./controlLabels";
 
 function StructureForm(props: {
   snapshot: MermaidDocumentSnapshot;
@@ -181,7 +186,9 @@ function StructureForm(props: {
               : Object.keys(c4Shapes)
             ).map((value) => (
               <option value={value}>
-                {flow ? value : (c4Shapes[value] ?? value)}
+                {flow
+                  ? (flowShapeLabels[value] ?? value)
+                  : (c4Shapes[value] ?? value)}
               </option>
             ))}
           </select>
@@ -259,7 +266,9 @@ function StructureForm(props: {
                 ]
               : ["rel", "birel", "rel_b"]
             ).map((value) => (
-              <option value={value}>{value}</option>
+              <option value={value}>
+                {connectionKindLabels[value] ?? value}
+              </option>
             ))}
           </select>
         </label>
@@ -301,7 +310,7 @@ function StructureForm(props: {
           >
             <option value="">Automatic</option>
             {["TB", "BT", "LR", "RL"].map((value) => (
-              <option value={value}>{value}</option>
+              <option value={value}>{directionLabels[value]}</option>
             ))}
           </select>
         </label>
@@ -322,6 +331,7 @@ function StructureForm(props: {
 export function StructurePanel(props: {
   snapshot: MermaidDocumentSnapshot;
   execute: (command: DocumentCommand) => Promise<boolean>;
+  guided?: boolean;
 }) {
   const [draft, setDraft] = createSignal<{
     action: "node" | "group" | "relationship";
@@ -358,8 +368,8 @@ export function StructurePanel(props: {
           ? "Presentation-only mode. Enable Mermaid source edits to change labels, elements, connections or groups."
           : "Visual structure edits update Mermaid text and may reformat its structural statements. Manatee settings remain editable independently."}
       </p>
-      <details>
-        <summary>Create and edit structure</summary>
+      <details open={props.guided}>
+        <summary>Structure</summary>
         <fieldset
           disabled={
             props.snapshot.sourceEditing === false ||
@@ -437,7 +447,7 @@ export function StructurePanel(props: {
                 }
               >
                 {["TB", "BT", "LR", "RL"].map((value) => (
-                  <option value={value}>{value}</option>
+                  <option value={value}>{directionLabels[value]}</option>
                 ))}
               </select>
             </label>

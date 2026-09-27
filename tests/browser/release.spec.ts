@@ -1,5 +1,16 @@
 import { expect, test } from "@playwright/test";
 
+async function openAdvancedProcess(page: import("@playwright/test").Page) {
+  await page
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("button", { name: "Open Advanced process", exact: true })
+    .click();
+  await expect(page.locator('[data-element-id="review"]')).toBeVisible();
+}
+
 function releaseDiagram(): string {
   const lines = ["flowchart LR"];
   for (let group = 0; group < 10; group += 1) {
@@ -60,7 +71,7 @@ test("renders the enriched process starter within the render budget", async ({
 }) => {
   await page.goto("./");
   const started = await page.evaluate(() => performance.now());
-  await page.getByRole("button", { name: "Process example" }).click();
+  await openAdvancedProcess(page);
   await expect(page.locator('[data-notation="boundary-timer"]')).toBeVisible();
   await expect(page.locator('[data-notation="message-flow"]')).toBeVisible();
   const elapsed = await page.evaluate(
@@ -72,6 +83,7 @@ test("renders the enriched process starter within the render budget", async ({
 
 test("settles a moved node and its routes within 250 ms", async ({ page }) => {
   await page.goto("./");
+  await openAdvancedProcess(page);
   await expect(page.locator('[data-element-id="request"]')).toBeVisible();
   await page.getByRole("button", { name: "Show source" }).click();
   await page.locator('[data-element-id="request"]').click();
@@ -80,7 +92,7 @@ test("settles a moved node and its routes within 250 ms", async ({ page }) => {
   });
   await surface.focus();
   const started = await page.evaluate(() => performance.now());
-  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Alt+ArrowRight");
   await page.waitForFunction(() =>
     document
       .querySelector<HTMLTextAreaElement>(

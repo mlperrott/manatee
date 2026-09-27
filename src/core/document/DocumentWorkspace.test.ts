@@ -87,6 +87,26 @@ describe("multiple document workspace", () => {
     expect(restored.state().source).toBe(fallback.source);
     restored.dispose();
   });
+  it("advances the recovery preview after a blank document becomes valid", async () => {
+    const memory = storage();
+    const current = workspace(memory.store);
+    await current.initialize({
+      filename: "blank.mmd",
+      source: "flowchart TD\n",
+    });
+    const valid = "flowchart TD\nA[Recovered] --> B[Work]\n";
+    current.editSource(valid);
+    await current.execute({ type: "select", elementId: undefined });
+    current.editSource("flowchart TD\nA[");
+    await current.execute({ type: "select", elementId: undefined });
+    await current.flushPersistence();
+
+    expect(memory.getSaved()?.tabs[0]).toMatchObject({
+      source: "flowchart TD\nA[",
+      lastValidSource: valid,
+    });
+    current.dispose();
+  });
   it("tracks portable saves separately from the initial source and guards the final tab", async () => {
     const memory = storage();
     const current = workspace(memory.store);

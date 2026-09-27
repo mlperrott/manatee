@@ -16,7 +16,7 @@ test("protects imported source while exposing presentation controls", async ({
     page.getByRole("tab", { name: "import.mmd", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(page.getByLabel("Allow Mermaid source edits")).not.toBeChecked();
-  await page.getByText("Create and edit structure", { exact: true }).click();
+  await page.getByText("Structure", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Add node", exact: true }),
   ).toBeDisabled();
@@ -40,7 +40,7 @@ test("protects imported source while exposing presentation controls", async ({
   await page
     .getByRole("button", { name: "Edit selected element", exact: true })
     .click();
-  await page.getByLabel("Element label").fill("Renamed");
+  await page.getByLabel("Element label", { exact: true }).fill("Renamed");
   await page
     .getByRole("button", { name: "Update element", exact: true })
     .click();
@@ -52,17 +52,21 @@ test("protects imported source while exposing presentation controls", async ({
   expect(errors).toEqual([]);
 });
 
-test("opens teaching examples in separate tabs and restores the workspace", async ({
+test("opens teaching examples beside edited work and restores the workspace", async ({
   page,
 }) => {
   await page.goto("./");
   await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
   await page
-    .getByRole("button", { name: "Example gallery", exact: true })
+    .getByRole("button", { name: "Add your first node", exact: true })
     .click();
-  await expect(
-    page.getByRole("dialog", { name: "Example gallery" }),
-  ).toBeVisible();
+  await page.getByLabel("Node label").fill("My first node");
+  await page.getByRole("button", { name: "Apply label" }).click();
+  await page
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
+    .click();
+  await expect(page.getByRole("dialog", { name: "Examples" })).toBeVisible();
   await page
     .getByRole("button", { name: "Open C4 containers", exact: true })
     .click();
@@ -73,7 +77,7 @@ test("opens teaching examples in separate tabs and restores the workspace", asyn
   await expect(
     page.getByText("About this example: C4 containers", { exact: true }),
   ).toBeVisible();
-  await page.getByText("Create and edit structure", { exact: true }).click();
+  await page.getByText("Structure", { exact: true }).click();
   await page.locator('[data-element-id="web"]').click();
   await page
     .getByRole("button", { name: "Edit selected element", exact: true })
@@ -86,13 +90,17 @@ test("opens teaching examples in separate tabs and restores the workspace", asyn
     page.getByRole("tab", { name: "c4-container.mmd •", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("tab", { name: "request-flow.mmd", exact: true })
+    .getByRole("tab", { name: "untitled-flowchart.mmd •", exact: true })
     .click();
-  await expect(page.locator('[data-element-id="review"]')).toBeVisible();
+  await expect(page.locator('[data-element-id="node_1"]')).toContainText(
+    "My first node",
+  );
   await page
     .getByRole("tab", { name: "c4-container.mmd •", exact: true })
     .click();
-  await expect(page.getByText("Recovery saved", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Recovered locally in this browser", { exact: true }),
+  ).toBeVisible();
   page.on("dialog", (dialog) => dialog.accept());
   await page.reload();
   await expect(
@@ -112,12 +120,6 @@ test("creates nodes, groups and connections without typing Mermaid", async ({
   });
   await page.goto("./");
   await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
-  await page.locator(".new-document-menu summary").click();
-  await page.getByRole("button", { name: "Flowchart", exact: true }).click();
-  await expect(
-    page.getByRole("tab", { name: "untitled-flowchart.mmd", exact: true }),
-  ).toBeVisible();
-  await page.getByText("Create and edit structure", { exact: true }).click();
   for (const [id, label] of [
     ["first", "First node"],
     ["second", "Second node"],
@@ -146,6 +148,7 @@ test("creates nodes, groups and connections without typing Mermaid", async ({
     .click();
   await expect(page.locator("svg")).toContainText("Next");
   await page.locator('[data-element-id="first"]').click();
+  await page.getByText("Structure", { exact: true }).click();
   await page
     .getByRole("button", { name: "Edit selected element", exact: true })
     .click();
@@ -164,12 +167,14 @@ test("edits typed attributes and complete styling rules", async ({ page }) => {
   await page.goto("./");
   await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
   await page
-    .getByRole("button", { name: "Example gallery", exact: true })
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
     .click();
   await page
     .getByRole("button", { name: "Open Attribute-driven styling", exact: true })
     .click();
   await page.locator('[data-element-id="deliver"]').click();
+  await page.getByText("Node attributes", { exact: true }).click();
   await page.getByLabel("Attribute risk", { exact: true }).fill("2");
   await page.getByLabel("Attribute risk", { exact: true }).blur();
   await expect(

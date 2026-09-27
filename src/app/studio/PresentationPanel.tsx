@@ -50,6 +50,23 @@ export function PresentationPanel(props: {
     props.snapshot.model?.nodes.find((item) => item.id === id());
   const relationship = () =>
     props.snapshot.model?.relationships.find((item) => item.id === id());
+  const repairId = createMemo(() => {
+    const used = new Set(
+      [
+        ...(props.snapshot.model?.nodes ?? []),
+        ...(props.snapshot.model?.groups ?? []),
+        ...(props.snapshot.model?.relationships ?? []),
+      ].flatMap((item) => [
+        item.id,
+        ...(item && "identity" in item && item.identity.kind === "authored"
+          ? [item.identity.id]
+          : []),
+      ]),
+    );
+    let number = 1;
+    while (used.has(`edge_${number}`)) number += 1;
+    return `edge_${number}`;
+  });
   const layoutRelationship = () =>
     props.snapshot.scene?.relationships.find((item) => item.id === id());
   const [attributeName, setAttributeName] = createSignal("");
@@ -105,12 +122,47 @@ export function PresentationPanel(props: {
   return (
     <div class="presentation-panel">
       <Show when={relationship() && !target()}>
-        <fieldset>
-          <legend>Connection docking</legend>
+        <fieldset
+          disabled={
+            props.snapshot.sourceEditing === false ||
+            !props.snapshot.commands.visualEditing
+          }
+        >
+          <legend>Appearance</legend>
           <p class="field-help">
-            Add an authored connection ID in Create and edit structure before
-            locking either endpoint to a dock.
+            This parallel connection needs a stable ID. Changing an appearance
+            value below adds {repairId()} and applies the change in the same
+            Undo step.
           </p>
+          <StyleFields
+            value={undefined}
+            effective={sceneItem()?.style}
+            edge
+            fixedLine={!!sceneItem()?.notation}
+            change={(path, value) => {
+              const relationshipId = id();
+              if (!relationshipId) return;
+              const base = [
+                "elements",
+                "relationships",
+                "byId",
+                repairId(),
+              ] as const;
+              void props.execute({
+                type: "identify-relationship",
+                elementId: relationshipId,
+                authoredId: repairId(),
+                edits: [
+                  editValue(
+                    path[0] === "text"
+                      ? [...base, ...path]
+                      : [...base, "style", ...path],
+                    value,
+                  ),
+                ],
+              });
+            }}
+          />
         </fieldset>
       </Show>
       <Show when={target()}>
@@ -142,227 +194,238 @@ export function PresentationPanel(props: {
           </button>
         </fieldset>
         <Show when={edge()}>
-          <fieldset
-            disabled={
-              props.snapshot.commands.presentation["set-dock"].state !==
-              "available"
-            }
-          >
-            <legend>Connection docking</legend>
-            {(["source", "target"] as const).map((endpoint) => (
-              <label>
-                {endpoint === "source" ? "Source dock" : "Target dock"}
-                <select
-                  aria-label={
-                    endpoint === "source" ? "Source dock" : "Target dock"
-                  }
-                  value={
-                    (endpoint === "source"
-                      ? layoutRelationship()?.sourceDock
-                      : layoutRelationship()?.targetDock) ?? "auto"
-                  }
-                  disabled={
-                    !props.snapshot.model?.nodes.some(
-                      (candidate) =>
-                        candidate.id === relationship()?.[endpoint],
-                    )
-                  }
-                  onChange={(event) =>
-                    void props.execute({
-                      type: "set-dock",
-                      elementId: id()!,
-                      endpoint,
-                      dock:
-                        event.currentTarget.value === "auto"
-                          ? undefined
-                          : (event.currentTarget.value as
-                              "top" | "right" | "bottom" | "left"),
-                    })
-                  }
-                >
-                  <option value="auto">Auto</option>
-                  <option value="top">North</option>
-                  <option value="right">East</option>
-                  <option value="bottom">South</option>
-                  <option value="left">West</option>
-                </select>
-              </label>
-            ))}
-            <p class="field-help">
-              Auto lets Manatee choose the dock. A chosen side remains locked
-              until changed here or Reset layout is used.
-            </p>
-          </fieldset>
+          <details class="advanced-controls">
+            <summary>Connection docking</summary>
+            <fieldset
+              disabled={
+                props.snapshot.commands.presentation["set-dock"].state !==
+                "available"
+              }
+            >
+              <legend>Endpoint docks</legend>
+              {(["source", "target"] as const).map((endpoint) => (
+                <label>
+                  {endpoint === "source" ? "Source dock" : "Target dock"}
+                  <select
+                    aria-label={
+                      endpoint === "source" ? "Source dock" : "Target dock"
+                    }
+                    value={
+                      (endpoint === "source"
+                        ? layoutRelationship()?.sourceDock
+                        : layoutRelationship()?.targetDock) ?? "auto"
+                    }
+                    disabled={
+                      !props.snapshot.model?.nodes.some(
+                        (candidate) =>
+                          candidate.id === relationship()?.[endpoint],
+                      )
+                    }
+                    onChange={(event) =>
+                      void props.execute({
+                        type: "set-dock",
+                        elementId: id()!,
+                        endpoint,
+                        dock:
+                          event.currentTarget.value === "auto"
+                            ? undefined
+                            : (event.currentTarget.value as
+                                "top" | "right" | "bottom" | "left"),
+                      })
+                    }
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="top">North</option>
+                    <option value="right">East</option>
+                    <option value="bottom">South</option>
+                    <option value="left">West</option>
+                  </select>
+                </label>
+              ))}
+              <p class="field-help">
+                Auto lets Manatee choose the dock. A chosen side remains locked
+                until changed here or Reset layout is used.
+              </p>
+            </fieldset>
+          </details>
         </Show>
         <Show when={!edge()}>
-          <fieldset disabled={!props.snapshot.commands.visualEditing}>
-            <legend>Exact position</legend>
-            <Show
-              when={timer()}
-              fallback={
-                <>
-                  {(["x", "y"] as const).map((axis) => (
+          <details class="advanced-controls">
+            <summary>Coordinates</summary>
+            <fieldset disabled={!props.snapshot.commands.visualEditing}>
+              <legend>Exact position</legend>
+              <Show
+                when={timer()}
+                fallback={
+                  <>
+                    {(["x", "y"] as const).map((axis) => (
+                      <label>
+                        {axis.toUpperCase()}
+                        <input
+                          aria-label={`Position ${axis.toUpperCase()}`}
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={position()[axis]}
+                          onChange={(event) => {
+                            if (event.currentTarget.reportValidity())
+                              change(["position"], {
+                                ...position(),
+                                [axis]: Number(event.currentTarget.value),
+                              });
+                          }}
+                        />
+                      </label>
+                    ))}
+                    <p class="field-help">
+                      Coordinates are relative to the parent’s content area.
+                    </p>
+                  </>
+                }
+              >
+                <label>
+                  Anchor side
+                  <select
+                    aria-label="Anchor side"
+                    value={timer()?.anchor?.side ?? "bottom"}
+                    onChange={(event) =>
+                      change(["notation", "anchor"], {
+                        side: event.currentTarget.value,
+                        offset: timer()?.anchor?.offset ?? 0.8,
+                      })
+                    }
+                  >
+                    {["top", "right", "bottom", "left"].map((side) => (
+                      <option value={side}>{side}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Anchor offset
+                  <input
+                    aria-label="Anchor offset"
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="any"
+                    value={timer()?.anchor?.offset ?? 0.8}
+                    onChange={(event) => {
+                      if (event.currentTarget.reportValidity())
+                        change(["notation", "anchor"], {
+                          side: timer()?.anchor?.side ?? "bottom",
+                          offset: Number(event.currentTarget.value),
+                        });
+                    }}
+                  />
+                </label>
+              </Show>
+              <button
+                type="button"
+                disabled={
+                  props.snapshot.commands.presentation["use-automatic-position"]
+                    .state !== "available"
+                }
+                onClick={() =>
+                  void props.execute({
+                    type: "use-automatic-position",
+                    elementId: id()!,
+                  })
+                }
+              >
+                Use automatic position
+              </button>
+            </fieldset>
+          </details>
+        </Show>
+        <Show when={node()}>
+          <details class="advanced-controls">
+            <summary>Node attributes</summary>
+            <fieldset disabled={!props.snapshot.commands.visualEditing}>
+              <legend>Attributes</legend>
+              <For each={attributes()}>
+                {([name, value]) => (
+                  <div class="attribute-card">
                     <label>
-                      {axis.toUpperCase()}
+                      Attribute name
                       <input
-                        aria-label={`Position ${axis.toUpperCase()}`}
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={position()[axis]}
+                        aria-label={`Rename attribute ${name}`}
+                        value={name}
                         onChange={(event) => {
-                          if (event.currentTarget.reportValidity())
-                            change(["position"], {
-                              ...position(),
-                              [axis]: Number(event.currentTarget.value),
-                            });
+                          const next = event.currentTarget.value.trim();
+                          if (
+                            !next ||
+                            (next !== name &&
+                              next in record(at(entry(), ["attributes"])))
+                          ) {
+                            setAttributeError(
+                              "Use a unique, nonempty attribute name.",
+                            );
+                            return;
+                          }
+                          if (next !== name)
+                            void edit([
+                              {
+                                type: "set",
+                                path: [...target()!.path, "attributes", next],
+                                value: value as MetadataValue,
+                              },
+                              {
+                                type: "remove",
+                                path: [...target()!.path, "attributes", name],
+                              },
+                            ]);
                         }}
                       />
                     </label>
-                  ))}
-                  <p class="field-help">
-                    Coordinates are relative to the parent’s content area.
-                  </p>
-                </>
-              }
-            >
+                    <ScalarField
+                      label={`Attribute ${name}`}
+                      value={value as string | number | boolean}
+                      change={(next) => change(["attributes", name], next)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => change(["attributes", name], undefined)}
+                    >
+                      Remove {name}
+                    </button>
+                  </div>
+                )}
+              </For>
               <label>
-                Anchor side
-                <select
-                  aria-label="Anchor side"
-                  value={timer()?.anchor?.side ?? "bottom"}
-                  onChange={(event) =>
-                    change(["notation", "anchor"], {
-                      side: event.currentTarget.value,
-                      offset: timer()?.anchor?.offset ?? 0.8,
-                    })
-                  }
-                >
-                  {["top", "right", "bottom", "left"].map((side) => (
-                    <option value={side}>{side}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Anchor offset
+                New attribute name
                 <input
-                  aria-label="Anchor offset"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="any"
-                  value={timer()?.anchor?.offset ?? 0.8}
-                  onChange={(event) => {
-                    if (event.currentTarget.reportValidity())
-                      change(["notation", "anchor"], {
-                        side: timer()?.anchor?.side ?? "bottom",
-                        offset: Number(event.currentTarget.value),
-                      });
-                  }}
+                  aria-label="New attribute name"
+                  value={attributeName()}
+                  onInput={(event) =>
+                    setAttributeName(event.currentTarget.value)
+                  }
                 />
               </label>
-            </Show>
-            <button
-              type="button"
-              disabled={
-                props.snapshot.commands.presentation["use-automatic-position"]
-                  .state !== "available"
-              }
-              onClick={() =>
-                void props.execute({
-                  type: "use-automatic-position",
-                  elementId: id()!,
-                })
-              }
-            >
-              Use automatic position
-            </button>
-          </fieldset>
-        </Show>
-        <Show when={node()}>
-          <fieldset disabled={!props.snapshot.commands.visualEditing}>
-            <legend>Node attributes</legend>
-            <For each={attributes()}>
-              {([name, value]) => (
-                <div class="attribute-card">
-                  <label>
-                    Attribute name
-                    <input
-                      aria-label={`Rename attribute ${name}`}
-                      value={name}
-                      onChange={(event) => {
-                        const next = event.currentTarget.value.trim();
-                        if (
-                          !next ||
-                          (next !== name &&
-                            next in record(at(entry(), ["attributes"])))
-                        ) {
-                          setAttributeError(
-                            "Use a unique, nonempty attribute name.",
-                          );
-                          return;
-                        }
-                        if (next !== name)
-                          void edit([
-                            {
-                              type: "set",
-                              path: [...target()!.path, "attributes", next],
-                              value: value as MetadataValue,
-                            },
-                            {
-                              type: "remove",
-                              path: [...target()!.path, "attributes", name],
-                            },
-                          ]);
-                      }}
-                    />
-                  </label>
-                  <ScalarField
-                    label={`Attribute ${name}`}
-                    value={value as string | number | boolean}
-                    change={(next) => change(["attributes", name], next)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => change(["attributes", name], undefined)}
-                  >
-                    Remove {name}
-                  </button>
-                </div>
-              )}
-            </For>
-            <label>
-              New attribute name
-              <input
-                aria-label="New attribute name"
-                value={attributeName()}
-                onInput={(event) => setAttributeName(event.currentTarget.value)}
+              <ScalarField
+                label="New attribute value"
+                value={attributeValue()}
+                change={setAttributeValue}
               />
-            </label>
-            <ScalarField
-              label="New attribute value"
-              value={attributeValue()}
-              change={setAttributeValue}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                const name = attributeName().trim();
-                if (!name || name in record(at(entry(), ["attributes"]))) {
-                  setAttributeError("Use a unique, nonempty attribute name.");
-                  return;
-                }
-                change(["attributes", name], attributeValue());
-                setAttributeName("");
-                setAttributeError("");
-              }}
-            >
-              Add attribute
-            </button>
-            <Show when={attributeError()}>
-              <p role="alert">{attributeError()}</p>
-            </Show>
-          </fieldset>
+              <button
+                type="button"
+                onClick={() => {
+                  const name = attributeName().trim();
+                  if (!name || name in record(at(entry(), ["attributes"]))) {
+                    setAttributeError("Use a unique, nonempty attribute name.");
+                    return;
+                  }
+                  change(["attributes", name], attributeValue());
+                  setAttributeName("");
+                  setAttributeError("");
+                }}
+              >
+                Add attribute
+              </button>
+              <Show when={attributeError()}>
+                <p role="alert">{attributeError()}</p>
+              </Show>
+            </fieldset>
+          </details>
         </Show>
       </Show>
       <details>

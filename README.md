@@ -5,12 +5,12 @@ direct manipulation, presentation styling, and common BPMN notation while
 keeping the underlying Mermaid source readable and editable.
 
 [Try Manatee](https://mlperrott.github.io/manatee/) ·
-[Studio guide](docs/studio.md) ·
+[Editor guide](docs/studio.md) ·
 [Release and compatibility](docs/release.md)
 
 [![Verify](https://github.com/mlperrott/manatee/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/mlperrott/manatee/actions/workflows/verify.yml)
 
-[![Manatee Studio showing a process diagram with pools, lanes, events, gateways, and the presentation inspector](docs/ux/readme-studio.png)](https://mlperrott.github.io/manatee/)
+[![Manatee showing a process diagram with pools, lanes, events, gateways, and the presentation inspector](docs/ux/readme-studio.png)](https://mlperrott.github.io/manatee/)
 
 ## Why Manatee?
 
@@ -24,7 +24,7 @@ Ordinary Mermaid viewers still show the authored structure; Manatee restores the
 richer notation, styling, layout, and routing.
 
 Everything runs in the browser. No account or backend is required, and recovery
-saves remain in that browser until you save a portable file.
+copies remain in that browser until you download a portable file.
 
 ## What you can do
 
@@ -42,9 +42,10 @@ saves remain in that browser until you save a portable file.
 - **Work safely:** keep multiple documents open, undo and redo changes, preserve
   the last valid preview while source is incomplete, and recover browser-local
   autosaves after a reload.
-- **Move between tools:** open and save `.mmd` and `.mermaid` files, export the
-  rendered scene as SVG or high-resolution PNG, or copy a PNG to the clipboard.
-- **Use desktop or mobile:** the responsive Studio supports diagram selection,
+- **Move between tools:** open `.mmd` and `.mermaid` files, download portable
+  source, export the rendered scene as SVG or high-resolution PNG, or copy a PNG
+  to the clipboard.
+- **Use desktop or mobile:** the responsive editor supports diagram selection,
   source editing, inspection, node movement, panning, and zooming on phones.
 
 Manatee currently supports Mermaid 11.17.2 flowcharts with subgraphs, native
@@ -55,22 +56,23 @@ boundary and checked limits.
 
 ## Try it
 
-The fastest path is the [hosted Studio](https://mlperrott.github.io/manatee/):
+The fastest path is the [hosted editor](https://mlperrott.github.io/manatee/):
 
-1. Open **Example gallery** and choose a process, C4, styling, or saved-layout
-   example.
-2. Select an element on the canvas and use the inspector to change its notation,
-   appearance, attributes, or position.
-3. Enable **Allow Mermaid source edits** when you want visual structural changes
-   or direct source editing.
-4. Use **Save** for a portable Mermaid file or **Export** for SVG or PNG.
+1. Choose **Add your first node** on a blank canvas, paste Mermaid source, or
+   open **Examples**.
+2. Label the starter node, add another, and connect them using the guided canvas
+   actions. Select any element to change its label, shape, or appearance.
+3. Use the arrow keys to select diagram elements. Hold Alt or Option while using
+   an arrow key to move the selected element.
+4. Use **Download .mmd** for a portable Mermaid file or **Export** for SVG or
+   PNG. Browser recovery is separate and stays on this device.
 
-The [Studio guide](docs/studio.md) covers authoring scope, connection docking and
+The [editor guide](docs/studio.md) covers authoring scope, connection docking and
 reconnection, styling rules, document recovery, and mobile controls.
 
 ## Project status and direction
 
-Manatee is actively developed and pre-1.0. The public Studio is continuously
+Manatee is actively developed and pre-1.0. The public editor is continuously
 deployed from `main` only after source, unit, production-build, desktop-browser,
 and mobile-browser checks pass. The deployed site then runs its own smoke suite.
 
@@ -128,7 +130,7 @@ Studio → DocumentSession → MermaidDocument → parse and normalize
   rendering.
 - `src/persistence` owns browser-local document recovery.
 - `src/export` owns SVG, PNG, and clipboard output.
-- `src/app` contains the Studio UI and interactions.
+- `src/app` contains the editor UI and interactions.
 
 [ADR-0002](docs/adr/0002-mermaid-authored-bpmn-notation.md) explains the
 Mermaid-first product and architecture decision. The checked front-matter format
@@ -136,7 +138,7 @@ is documented by the [version-one JSON Schema](docs/schema/manatee-v1.schema.jso
 
 ## Documentation and support
 
-- [Studio authoring and examples](docs/studio.md)
+- [Editor authoring and examples](docs/studio.md)
 - [Release scope, browser support, and export compatibility](docs/release.md)
 - [Project language and domain model](CONTEXT.md)
 - [Architecture decisions](docs/adr/)

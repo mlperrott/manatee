@@ -41,6 +41,7 @@ export interface DocumentSessionState {
   readonly workspaceSaveFailed?: boolean;
   readonly filename: string;
   readonly source: string;
+  readonly lastValidSource: string | undefined;
   readonly snapshot: MermaidDocumentSnapshot | undefined;
   readonly recovery: SavedDocument | undefined;
   readonly status: DocumentSessionStatus;
@@ -102,6 +103,7 @@ export class DocumentSession implements Disposable {
     this.#state = Object.freeze({
       filename: options.initialFilename ?? "",
       source: options.initialSource ?? "",
+      lastValidSource: undefined,
       snapshot: undefined,
       recovery: undefined,
       status: Object.freeze({ kind: "ready" as const }),
@@ -369,7 +371,12 @@ export class DocumentSession implements Disposable {
   ): Promise<void> {
     if (!this.#owns(revision, active)) return;
     if (snapshot.valid) this.#lastValidSource = snapshot.source;
-    this.#update({ filename, source: snapshot.source, snapshot });
+    this.#update({
+      filename,
+      source: snapshot.source,
+      lastValidSource: this.#lastValidSource,
+      snapshot,
+    });
     if (!this.#owns(revision, active)) return;
     this.#update({ status: Object.freeze({ kind: "ready" }) });
     if (this.#persistenceReady) {

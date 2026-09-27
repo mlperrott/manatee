@@ -1,10 +1,10 @@
-# Studio authoring and examples
+# Manatee authoring and examples
 
-Studio supports Mermaid flowcharts, native swimlanes, C4 context and C4 container diagrams. Open **Example gallery** to explore simple BPMN, swim lanes, advanced process notation, both C4 families, three styling variations, attribute-driven rules, and saved layout. Every example opens as a separate editable document; its **About this example** panel explains the extension and suggests edits to try.
+Manatee supports Mermaid flowcharts, native swimlanes, C4 context and C4 container diagrams. A new flowchart opens with a guided canvas: add and label a first node, add another, then connect them. You can also paste Mermaid source or open **Examples** to explore simple BPMN, swim lanes, advanced process notation, both C4 families, styling variations, attribute-driven rules, and saved layout. Every example opens as a separate editable document; its **About this example** panel explains the extension and suggests edits to try.
 
 ## Editing scope
 
-Imported documents start in presentation-only mode. The inspector can change Manatee metadata: appearance, notation, attributes, rules, spacing, positions and timer anchors. The source panel remains readable. Enable **Allow Mermaid source edits** to edit the source or use **Create and edit structure** for nodes, connections, labels, groups and C4 details. New documents and examples start with this enabled.
+Imported documents start in presentation-only mode. The inspector can change Manatee metadata: appearance, notation, attributes, rules, spacing, positions and timer anchors. The source panel remains readable. Enable **Allow Mermaid source edits** to edit the source or use **Structure** for nodes, connections, labels, groups and C4 details. New documents and examples start with this enabled. Common selection controls—label, shape and connection kind—appear first; notation, attributes and exact coordinates are grouped under advanced controls.
 
 The document engine enforces the restriction, including undo and redo. An undo that would cross into a Mermaid source change is disabled until Mermaid editing is enabled. Changing the restriction does not clear history.
 
@@ -18,6 +18,8 @@ Select an element to edit its effective colours, outline width and pattern, text
 
 Positions are relative to the parent’s content area. While dragging a node, Manatee snaps its centreline to directly connected nodes within eight screen pixels, shows a temporary guide and releases the snap beyond twelve pixels. Hold Alt or Option to bypass snapping; keyboard movement and exact coordinates remain unsnapped. Boundary timers use a host-border side and offset between zero and one.
 
+Focus the canvas and use the arrow keys to move selection through nodes, groups and connections in document order. Hold Alt or Option while pressing an arrow key to move a selected node. Manatee announces the selected element and provides a visible focus treatment and keyboard reminder.
+
 Selecting a connection reveals handles for both endpoints. Drag a handle to one of the current node’s north, east, south or west dock targets to lock that endpoint there. Drag it to a dashed **Reconnect** target to change the Mermaid connection; reconnection is available only when Mermaid source editing is enabled. The inspector provides independent Auto and cardinal-side choices for both endpoints. Dock locks are presentation settings, while reconnection changes the semantic source. Reset layout clears positions, timer anchors and dock locks; resetting spacing is a separate action.
 
 Node attributes support text, numbers and booleans, with rename and removal. Styling rules can combine node IDs, classes and attribute conditions. Predicates include typed equality, membership lists, existence and numeric comparisons. All conditions in a rule must match. Rules run in document order, then individual presentation overrides take precedence. Rules apply to nodes. The rule editor supports editing, deletion and reordering without writing YAML.
@@ -26,12 +28,12 @@ Document-wide layout controls and styling rules remain available with no element
 
 ## Documents, saving and recovery
 
-Each open document owns its selection, undo/redo history, source restriction, portable-save baseline and last valid preview. Switching tabs does not reopen it. The workspace restores open documents, their contents, active tab and restrictions after reload. Undo history lasts for the current session; it is not stored across reloads.
+Each open document owns its selection, undo/redo history, source restriction, portable-download baseline and last valid preview. Switching tabs does not reopen it. The workspace restores open documents, their contents, active tab and restrictions after reload. Undo history lasts for the current session; it is not stored across reloads.
 
-**Recovery saved** means the workspace has been committed to this browser’s storage. **Save** writes a portable Mermaid file or downloads one. Saving one tab does not mark another tab saved. Closing a document with unsaved changes asks before discarding it; the final tab remains open. The browser also asks before leaving with unsaved work.
+**Recovered locally in this browser** means the workspace has been committed to browser storage on this device. **Download .mmd** writes a portable Mermaid file. **Changes since last download** identifies documents whose current source differs from the last downloaded copy. Downloading one tab does not mark another tab downloaded. Closing a document with changes asks before discarding it; the final tab remains open. The browser also asks before leaving with changes.
 
-Recovery is browser-local. Clearing browser data removes it. File handles are not retained across reloads, so Save downloads a portable file after restoring a workspace. Older single-document autosaves remain available through the recovery notice.
+Recovery is browser-local. Clearing browser data removes it. **Download .mmd** always downloads a portable copy, including after restoring a workspace. Older single-document autosaves remain available through the recovery notice.
 
 ## Desktop and mobile
 
-Desktop provides canvas, inspector and optional source side by side. Phones use Canvas, Source and Inspector views with the same authoring controls. Tap a node or connection to select it; drag a node to move it. Connected lines follow the node during the drag and reroute when released. On desktop, dragging a container previews its nested containers, nodes and connections together before the final reroute. Container dragging remains desktop-only. Swipe the blank canvas or a connection to scroll, and use the zoom controls for dense diagrams. Advanced controls are expandable, gallery navigation is keyboard accessible, and primary touch controls use at least 44 CSS pixels.
+Desktop provides canvas, inspector and optional source side by side. Phones use Canvas, Source and Inspector views with the same authoring controls, plus an **Open documents** picker that always identifies the current document. Tap a node or connection to select it; drag a node to move it. Connected lines follow the node during the drag and reroute when released. On desktop, dragging a container previews its nested containers, nodes and connections together before the final reroute. Container dragging remains desktop-only. Swipe the blank canvas or a connection to scroll. **Fit** shows the whole diagram; **100%** restores actual size. Advanced controls are expandable, example navigation is keyboard accessible, and primary touch controls use at least 44 CSS pixels.

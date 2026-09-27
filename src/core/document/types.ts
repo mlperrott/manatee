@@ -8,6 +8,7 @@ export type DiagnosticSeverity = "info" | "warning" | "error";
 export interface DocumentDiagnostic {
   readonly code: string;
   readonly message: string;
+  readonly details?: string;
   readonly severity: DiagnosticSeverity;
   readonly range?: SourceRange;
   readonly path?: string;

@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onSettled } from "solid-js";
+import { createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import { studioExamples, type StudioExample } from "./examples";
 export function ExamplesGallery(props: {
   open: (example: StudioExample) => void;
@@ -25,22 +25,18 @@ export function ExamplesGallery(props: {
       class="examples-gallery"
       ref={dialog}
       onCancel={props.close}
-      aria-label="Example gallery"
+      aria-label="Examples"
     >
       <div class="gallery-heading">
         <div>
           <span class="eyebrow">Learn Manatee</span>
-          <h2>Explore what Studio can do</h2>
+          <h2>Explore what Manatee can do</h2>
           <p>
-            Each example opens in its own editable document. Your other work
-            stays open.
+            Examples open as editable documents. An untouched blank is reused;
+            other work stays open.
           </p>
         </div>
-        <button
-          type="button"
-          aria-label="Close example gallery"
-          onClick={props.close}
-        >
+        <button type="button" aria-label="Close examples" onClick={props.close}>
           ×
         </button>
       </div>
@@ -54,6 +50,9 @@ export function ExamplesGallery(props: {
           placeholder="BPMN, C4, typography, rules…"
         />
       </label>
+      <p class="gallery-result-count" role="status" aria-live="polite">
+        {examples().length} {examples().length === 1 ? "example" : "examples"}
+      </p>
       <div class="example-grid">
         <For each={examples()}>
           {(example) => (
@@ -67,6 +66,15 @@ export function ExamplesGallery(props: {
             </article>
           )}
         </For>
+        <Show when={examples().length === 0}>
+          <div class="gallery-empty">
+            <strong>No examples match “{filter().trim()}”</strong>
+            <p>Try a broader term or show every example again.</p>
+            <button type="button" onClick={() => setFilter("")}>
+              Clear search
+            </button>
+          </div>
+        </Show>
       </div>
     </dialog>
   );

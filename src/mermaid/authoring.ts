@@ -229,6 +229,7 @@ export function editStructure(
       if (
         old &&
         old.identity.kind !== "authored" &&
+        !edit.authoredId &&
         relationships.some(
           (item) =>
             item.id !== old.id &&

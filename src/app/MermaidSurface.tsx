@@ -114,6 +114,26 @@ function movable(group: SVGElement | undefined): boolean {
   );
 }
 
+function navigationItems(scene: MermaidScene | undefined) {
+  if (!scene) return [];
+  const groups = scene.sourceModel.groups.map((item) => ({
+    id: item.id,
+    label: item.label,
+    type: item.kind === "lane" ? "lane" : "group",
+  }));
+  const nodes = scene.sourceModel.nodes.map((item) => ({
+    id: item.id,
+    label: item.label,
+    type: "node",
+  }));
+  const relationships = scene.sourceModel.relationships.map((item) => ({
+    id: item.id,
+    label: item.label || `${item.source} to ${item.target}`,
+    type: "connection",
+  }));
+  return [...groups, ...nodes, ...relationships];
+}
+
 interface RelationshipPreview {
   readonly relationship: LayoutRelationship;
   readonly paths: readonly SVGPathElement[];
@@ -703,7 +723,23 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
   // oxlint-disable-next-line no-unassigned-vars
   let container: HTMLDivElement | undefined;
   const [size, setSize] = createSignal({ width: 0, height: 0 });
+  const [announcement, setAnnouncement] = createSignal("");
   let drag: SurfaceDrag | undefined;
+
+  const selectAndAnnounce = (id: string | undefined) => {
+    props.onSelect(id);
+    if (!id) {
+      setAnnouncement("Selection cleared.");
+      return;
+    }
+    const items = navigationItems(props.scene);
+    const index = items.findIndex((item) => item.id === id);
+    const item = items[index];
+    if (item)
+      setAnnouncement(
+        `${item.type} ${item.label}, ${index + 1} of ${items.length}, selected.`,
+      );
+  };
 
   const clearDrag = () => {
     const previews =
@@ -772,26 +808,58 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
       ref={container}
       role="application"
       aria-label="Interactive Mermaid diagram"
+      aria-describedby="diagram-keyboard-help"
       aria-disabled={props.disabled ? "true" : "false"}
       tabindex={0}
       onKeyDown={(event) => {
+        if (props.disabled) return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          selectAndAnnounce(undefined);
+          return;
+        }
+        const items = navigationItems(props.scene);
+        const direction = {
+          ArrowLeft: -1,
+          ArrowUp: -1,
+          ArrowRight: 1,
+          ArrowDown: 1,
+        }[event.key];
+        if (direction === undefined) return;
         const id = elementId(event.target) ?? props.selectedElementId;
-        if (!id || props.disabled) return;
+        if (!event.altKey) {
+          if (items.length === 0) return;
+          event.preventDefault();
+          const current = items.findIndex((item) => item.id === id);
+          const next =
+            current < 0
+              ? direction > 0
+                ? 0
+                : items.length - 1
+              : (current + direction + items.length) % items.length;
+          selectAndAnnounce(items[next]!.id);
+          return;
+        }
+        if (!id) return;
         const group = [
           ...(container?.querySelectorAll<SVGElement>("[data-element-id]") ??
             []),
         ].find((item) => item.dataset.elementId === id);
         if (!movable(group)) return;
         const delta = event.shiftKey ? 20 : 5;
-        const direction = {
+        const movement = {
           ArrowLeft: [-delta, 0],
           ArrowRight: [delta, 0],
           ArrowUp: [0, -delta],
           ArrowDown: [0, delta],
         }[event.key];
-        if (!direction) return;
+        if (!movement) return;
         event.preventDefault();
-        props.onNudge(id, direction[0]!, direction[1]!);
+        props.onNudge(id, movement[0]!, movement[1]!);
+        const item = items.find((candidate) => candidate.id === id);
+        setAnnouncement(
+          `${item?.label ?? id} moved ${event.key.replace("Arrow", "").toLowerCase()}.`,
+        );
       }}
       onPointerDown={(event) => {
         if (!event.isPrimary) {
@@ -972,7 +1040,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         if (event.currentTarget.hasPointerCapture(event.pointerId))
           event.currentTarget.releasePointerCapture(event.pointerId);
         if (completed.kind === "endpoint") {
-          props.onSelect(completed.relationshipId);
+          selectAndAnnounce(completed.relationshipId);
           if (!moved || !completed.target) return;
           if (completed.target.kind === "dock")
             props.onSetDock(
@@ -989,7 +1057,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           return;
         }
         if (moved && completed.groups.length === 0) return;
-        props.onSelect(completed.id);
+        selectAndAnnounce(completed.id);
         if (moved && completed.groups.length > 0 && completed.id)
           props.onNudge(completed.id, completed.dx, completed.dy);
       }}
@@ -1002,6 +1070,13 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         }}
         innerHTML={props.svg}
       />
+      <p class="mermaid-surface__keyboard-help" id="diagram-keyboard-help">
+        Arrow keys select elements. Alt or Option + arrow moves a selected node.
+        Escape clears the selection.
+      </p>
+      <span class="visually-hidden" role="status" aria-live="polite">
+        {announcement()}
+      </span>
     </div>
   );
 }

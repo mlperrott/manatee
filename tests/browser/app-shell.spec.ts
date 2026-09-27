@@ -1,12 +1,46 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
+async function openAdvancedProcess(page: import("@playwright/test").Page) {
+  await page
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("button", { name: "Open Advanced process", exact: true })
+    .click();
+  await expect(page.locator('[data-element-id="review"]')).toBeVisible();
+}
+
+async function savedWorkspacePreview(page: import("@playwright/test").Page) {
+  return page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("manatee-studio", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const workspace = await new Promise<
+      { tabs?: { lastValidSource?: string }[] } | undefined
+    >((resolve, reject) => {
+      const request = database
+        .transaction("documents", "readonly")
+        .objectStore("documents")
+        .get("workspace");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return workspace?.tabs?.[0]?.lastValidSource;
+  });
+}
+
 test("edits a Mermaid document through source, keyboard, and inspector", async ({
   page,
 }) => {
   const runtimeErrors: Error[] = [];
   page.on("pageerror", (error) => runtimeErrors.push(error));
   await page.goto("./");
+  await openAdvancedProcess(page);
 
   await expect(
     page.getByRole("img", { name: "Manatee Mermaid diagram" }),
@@ -39,7 +73,7 @@ test("edits a Mermaid document through source, keyboard, and inspector", async (
   await page
     .getByRole("application", { name: "Interactive Mermaid diagram" })
     .focus();
-  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Alt+ArrowRight");
   await expect(source).toHaveValue(/position:/u);
 
   await source.fill("flowchart LR\n  request[");
@@ -55,12 +89,14 @@ test("changes process notation through the Mermaid inspector", async ({
   page,
 }) => {
   await page.goto("./");
+  await openAdvancedProcess(page);
   await page.locator('[data-element-id="review"]').click();
   await expect(
     page
       .getByRole("complementary", { name: "Inspector" })
       .getByText("Review request", { exact: true }),
   ).toBeVisible();
+  await page.getByText("Process notation", { exact: true }).click();
   await page
     .getByLabel("Process notation")
     .selectOption("collapsed-subprocess");
@@ -95,7 +131,9 @@ test("opens and downloads a portable source document", async ({ page }) => {
     "architecture.mmd",
   );
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Download .mmd", exact: true })
+    .click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("architecture.mmd");
   const path = await download.path();
@@ -114,20 +152,28 @@ test("recovers invalid autosave with its last valid preview", async ({
   await expect(
     page.getByRole("region", { name: "Diagram canvas" }).getByText("Recovered"),
   ).toBeVisible();
+  await expect
+    .poll(() => savedWorkspacePreview(page))
+    .toBe("flowchart LR\n  alpha[Recovered] --> beta[Work]\n");
   await source.fill("flowchart LR\n  alpha[");
   await expect(page.getByText("Source has errors")).toBeVisible();
   await page.waitForTimeout(500);
+  await expect
+    .poll(() => savedWorkspacePreview(page))
+    .toBe("flowchart LR\n  alpha[Recovered] --> beta[Work]\n");
 
   await page.reload();
   await expect(
-    page.getByRole("tab", { name: "request-flow.mmd •", exact: true }),
+    page.getByRole("tab", { name: "untitled-flowchart.mmd •", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Show source" }).click();
   await expect(
     page.getByRole("textbox", { name: "Diagram source" }),
   ).toHaveValue("flowchart LR\n  alpha[");
   await expect(page.locator('svg[data-outdated="true"]')).toBeVisible();
-  await expect(page.getByText("Recovered", { exact: true })).toBeVisible();
+  await expect(page.locator('svg[data-outdated="true"]')).toContainText(
+    "Recovered",
+  );
 });
 
 test("retires a legacy BPMN autosave before opening Mermaid", async ({
@@ -212,7 +258,7 @@ test("retires a legacy BPMN autosave before opening Mermaid", async ({
   });
   expect(stored.active).toMatchObject({
     version: 1,
-    tabs: [expect.objectContaining({ filename: "request-flow.mmd" })],
+    tabs: [expect.objectContaining({ filename: "untitled-flowchart.mmd" })],
   });
   expect(stored.active).not.toHaveProperty("kind");
   expect(stored.retired).toMatchObject({
@@ -240,6 +286,7 @@ test("exports scaled PNG and falls back to download when clipboard fails", async
   page,
 }) => {
   await page.goto("./");
+  await openAdvancedProcess(page);
   const viewBox = (await page
     .locator("svg[data-manatee-renderer]")
     .getAttribute("viewBox"))!
@@ -250,7 +297,7 @@ test("exports scaled PNG and falls back to download when clipboard fails", async
   const svgPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download SVG" }).click();
   const svgDownload = await svgPromise;
-  expect(svgDownload.suggestedFilename()).toBe("request-flow.svg");
+  expect(svgDownload.suggestedFilename()).toBe("process.svg");
   const svgPath = await svgDownload.path();
   const exportedSvg = await readFile(svgPath!, "utf8");
   expect(exportedSvg).toContain('data-manatee-renderer="mermaid"');
@@ -259,7 +306,7 @@ test("exports scaled PNG and falls back to download when clipboard fails", async
   const pngPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download PNG" }).click();
   const png = await pngPromise;
-  expect(png.suggestedFilename()).toBe("request-flow.png");
+  expect(png.suggestedFilename()).toBe("process.png");
   const pngPath = await png.path();
   const bytes = await readFile(pngPath!);
   expect(bytes.subarray(1, 4).toString()).toBe("PNG");
@@ -327,7 +374,7 @@ test("exports scaled PNG and falls back to download when clipboard fails", async
   const fallbackPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Copy PNG" }).click();
   const fallback = await fallbackPromise;
-  expect(fallback.suggestedFilename()).toBe("request-flow.png");
+  expect(fallback.suggestedFilename()).toBe("process.png");
   await expect(
     page.getByText("Clipboard unavailable; PNG downloaded instead."),
   ).toBeVisible();
@@ -367,6 +414,7 @@ test("exports authored appearance without the editor selection highlight", async
   page,
 }) => {
   await page.goto("./");
+  await openAdvancedProcess(page);
   await page.locator('[data-element-id="review"]').click();
   await page.getByLabel("Outline colour", { exact: true }).fill("#123456");
   await page.getByLabel("Outline colour", { exact: true }).blur();
@@ -386,6 +434,7 @@ test("an invalid newly opened file cannot masquerade as the previous diagram", a
   page,
 }) => {
   await page.goto("./");
+  await openAdvancedProcess(page);
   await expect(page.locator('[data-element-id="review"]')).toBeVisible();
   await page.getByLabel("Choose diagram file").setInputFiles({
     name: "broken.mmd",

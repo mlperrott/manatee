@@ -107,6 +107,12 @@ export type DocumentCommand =
       readonly type: "select";
       readonly elementId: string | undefined;
     }
+  | {
+      readonly type: "identify-relationship";
+      readonly elementId: string;
+      readonly authoredId: string;
+      readonly edits: readonly MetadataEdit[];
+    }
   | { readonly type: "undo" }
   | { readonly type: "redo" }
   | PresentationCommand;

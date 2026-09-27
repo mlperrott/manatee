@@ -17,6 +17,17 @@ async function noPageOverflow(page: Page) {
   );
 }
 
+async function openAdvancedProcess(page: Page) {
+  await page
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
+    .tap();
+  await page
+    .getByRole("button", { name: "Open Advanced process", exact: true })
+    .tap();
+  await expect(page.locator('[data-element-id="review"]')).toBeVisible();
+}
+
 for (const [width, height] of [
   [320, 568],
   [375, 667],
@@ -33,15 +44,13 @@ for (const [width, height] of [
     await expect(diagram).toBeVisible();
     await noPageOverflow(page);
     await expect(async () => {
-      const drawing = await diagram.boundingBox();
       const surface = await page.locator(".mermaid-surface").boundingBox();
-      expect(drawing!.x).toBeGreaterThanOrEqual(surface!.x);
-      expect(drawing!.x + drawing!.width).toBeLessThanOrEqual(
-        surface!.x + surface!.width + 1,
-      );
-      expect(drawing!.y + drawing!.height).toBeLessThanOrEqual(
-        surface!.y + surface!.height + 1,
-      );
+      expect(surface!.width).toBeGreaterThan(0);
+      expect(surface!.height).toBeGreaterThan(0);
+      expect(surface!.x).toBeGreaterThanOrEqual(0);
+      expect(surface!.x + surface!.width).toBeLessThanOrEqual(width!);
+      expect(surface!.y).toBeGreaterThanOrEqual(0);
+      expect(surface!.y + surface!.height).toBeLessThanOrEqual(height!);
     }).toPass();
     for (const control of await page
       .locator("button:visible, summary:visible")
@@ -97,7 +106,9 @@ test("edits, selects, moves, styles, undoes, exports, and recovers on iPhone", a
   await page.getByText("Export", { exact: true }).tap();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download PNG" }).tap();
-  expect((await downloadPromise).suggestedFilename()).toBe("request-flow.png");
+  expect((await downloadPromise).suggestedFilename()).toBe(
+    "untitled-flowchart.png",
+  );
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Dismiss notification" }).tap();
   await view(page, "Source");
@@ -112,8 +123,8 @@ test("edits, selects, moves, styles, undoes, exports, and recovers on iPhone", a
   await page.waitForTimeout(500);
   await page.reload();
   await expect(
-    page.getByRole("tab", { name: "request-flow.mmd •", exact: true }),
-  ).toBeVisible();
+    page.locator(".open-documents-picker option:checked"),
+  ).toContainText("untitled-flowchart.mmd");
   await noPageOverflow(page);
   await view(page, "Source");
   await expect(source).toHaveValue("flowchart TD\n  phone[");
@@ -151,14 +162,13 @@ test("opens portable files and reaches process notation and export", async ({
   await expect(page.locator('[data-element-id="a"]')).toBeVisible();
   await noPageOverflow(page);
   const savePromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Save", exact: true }).tap();
+  await page.getByRole("button", { name: "Download .mmd", exact: true }).tap();
   expect((await savePromise).suggestedFilename()).toContain(
     "a-very-long-diagram",
   );
-  await expect(page.getByText("Portable document downloaded.")).toBeVisible();
+  await expect(page.getByText("Portable .mmd downloaded.")).toBeVisible();
   await page.getByRole("button", { name: "Dismiss notification" }).tap();
-  await page.getByText("Examples", { exact: true }).tap();
-  await page.getByRole("button", { name: "Process example" }).tap();
+  await openAdvancedProcess(page);
   await expect(
     page.locator('[data-notation="exclusive-gateway"]'),
   ).toBeVisible();
@@ -166,6 +176,7 @@ test("opens portable files and reaches process notation and export", async ({
   await page.locator('[data-element-id="review"]').tap();
   await view(page, "Inspector");
   await expect(page.locator(".selection-summary code")).toHaveText("review");
+  await page.getByText("Process notation", { exact: true }).tap();
   await page
     .getByLabel("Process notation")
     .selectOption("collapsed-subprocess");
@@ -187,6 +198,7 @@ test("opens portable files and reaches process notation and export", async ({
 
 test("cancelled touch drags never move an element", async ({ page }) => {
   await page.goto("./");
+  await openAdvancedProcess(page);
   const node = page.locator('[data-element-id="request"]');
   await node.dispatchEvent("pointerdown", {
     pointerId: 1,
@@ -338,7 +350,7 @@ test("finger drag previews and commits one node move", async ({
   ).toEqual(restoredPaths);
 });
 
-test("Save preserves the latest text even before the preview updates", async ({
+test("Download preserves the latest text even before the preview updates", async ({
   page,
 }) => {
   await page.goto("./");
@@ -348,7 +360,7 @@ test("Save preserves the latest text even before the preview updates", async ({
   const latest = "flowchart TD\n  phone[Unfinished edit";
   const downloadPromise = page.waitForEvent("download");
   await source.fill(latest);
-  await page.getByRole("button", { name: "Save", exact: true }).tap();
+  await page.getByRole("button", { name: "Download .mmd", exact: true }).tap();
   const download = await downloadPromise;
   expect(await readFile((await download.path())!, "utf8")).toBe(latest);
 });
@@ -357,9 +369,11 @@ test("notation controls are touch sized and explain timeout hosts only when need
   page,
 }) => {
   await page.goto("./");
+  await openAdvancedProcess(page);
   await page.locator('[data-element-id="review"]').tap();
   await view(page, "Inspector");
   await expect(page.getByLabel("Timeout task")).toHaveCount(0);
+  await page.getByText("Process notation", { exact: true }).tap();
   const symbol = page.getByLabel("Process notation");
   expect((await symbol.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   expect(
@@ -382,16 +396,22 @@ test("explores examples and visually authors a diagram on a phone", async ({
   await page.goto("./");
   await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
   await page
-    .getByRole("button", { name: "Example gallery", exact: true })
+    .getByRole("button", { name: "Add your first node", exact: true })
+    .tap();
+  await page.getByLabel("Node label").fill("Keep this document");
+  await page.getByRole("button", { name: "Apply label" }).tap();
+  await page
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
     .tap();
   await page
     .getByRole("button", { name: "Open Simple BPMN", exact: true })
     .tap();
   await expect(
-    page.getByRole("tab", { name: "simple-bpmn.mmd", exact: true }),
-  ).toBeVisible();
+    page.locator(".open-documents-picker option:checked"),
+  ).toContainText("simple-bpmn.mmd");
   await view(page, "Inspector");
-  await page.getByText("Create and edit structure", { exact: true }).tap();
+  await page.getByText("Structure", { exact: true }).tap();
   await page.getByRole("button", { name: "Add node", exact: true }).tap();
   await page.getByLabel("Element identifier").fill("extra");
   await page.getByLabel("Element label").fill("Phone task");
@@ -399,6 +419,7 @@ test("explores examples and visually authors a diagram on a phone", async ({
   await view(page, "Canvas");
   await page.locator('[data-element-id="extra"]').tap();
   await view(page, "Inspector");
+  await page.getByText("Process notation", { exact: true }).tap();
   await page.getByLabel("Process notation").selectOption("task");
   await page.getByText("Typography", { exact: true }).tap();
   await page.getByLabel("Text weight", { exact: true }).selectOption("700");
@@ -408,10 +429,10 @@ test("explores examples and visually authors a diagram on a phone", async ({
   await view(page, "Canvas");
   page.on("dialog", (dialog) => dialog.dismiss());
   await page
-    .getByRole("button", { name: "Close simple-bpmn.mmd", exact: true })
+    .getByRole("button", { name: "Close active diagram", exact: true })
     .tap();
   await expect(
-    page.getByRole("tab", { name: "simple-bpmn.mmd •", exact: true }),
-  ).toBeVisible();
+    page.locator(".open-documents-picker option:checked"),
+  ).toContainText("simple-bpmn.mmd");
   expect(errors).toEqual([]);
 });

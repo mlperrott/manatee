@@ -67,6 +67,7 @@ export class DocumentWorkspace {
     this.#initial = {
       filename: options.initialFilename,
       source: options.initialSource,
+      lastValidSource: undefined,
       snapshot: undefined,
       recovery: undefined,
       status: { kind: "ready" },
@@ -243,8 +244,8 @@ export class DocumentWorkspace {
         filename: state.filename,
         source: state.source,
         sourceEditing: state.snapshot?.sourceEditing ?? entry.tab.sourceEditing,
-        ...(state.snapshot?.valid
-          ? { lastValidSource: state.snapshot.source }
+        ...(state.lastValidSource
+          ? { lastValidSource: state.lastValidSource }
           : {}),
       };
       this.#publish();

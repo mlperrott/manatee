@@ -26,7 +26,13 @@ test("deployed release loads workers, process notation, files, and exports", asy
     "deployed-smoke.svg",
   );
 
-  await page.getByRole("button", { name: "Process example" }).click();
+  await page
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("button", { name: "Open Advanced process", exact: true })
+    .click();
   await expect(
     page.locator('[data-notation="exclusive-gateway"]'),
   ).toBeVisible();

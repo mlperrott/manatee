@@ -109,6 +109,56 @@ function parseErrorRange(
   return { start, end: Math.max(start, end) };
 }
 
+function unmatchedDelimiterDiagnostic(
+  source: string,
+): Pick<DocumentDiagnostic, "message" | "range"> | undefined {
+  const lines = source.split(/\r?\n/u);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]!;
+    const node = /\b([A-Za-z_][\w-]*)\s*(\[|\(|\{)/u.exec(line);
+    if (!node) continue;
+    const opening = node[2]!;
+    const closing = opening === "[" ? "]" : opening === "(" ? ")" : "}";
+    const openingCount = [...line].filter(
+      (character) => character === opening,
+    ).length;
+    const closingCount = [...line].filter(
+      (character) => character === closing,
+    ).length;
+    if (openingCount <= closingCount) continue;
+    const lineStart = positionAt(source, lineIndex + 1, 0);
+    const start = lineStart + (node.index ?? 0) + node[0].lastIndexOf(opening);
+    return {
+      message: `Missing closing “${closing}” in node ${node[1]}.`,
+      range: { start, end: lineStart + line.length },
+    };
+  }
+  return;
+}
+
+function friendlyParseDiagnostic(
+  source: string,
+  error: MermaidParseError | undefined,
+): Pick<DocumentDiagnostic, "message" | "range" | "details"> {
+  const details =
+    typeof error?.message === "string" ? error.message : undefined;
+  const unmatched = unmatchedDelimiterDiagnostic(source);
+  if (unmatched) return { ...unmatched, ...(details ? { details } : {}) };
+  const range = error ? parseErrorRange(source, error) : undefined;
+  const lineCount = source.split(/\r?\n/u).length;
+  const reportedLine = error?.hash?.loc?.first_line;
+  const line = reportedLine
+    ? Math.max(1, Math.min(lineCount, reportedLine))
+    : undefined;
+  return {
+    message: line
+      ? `Mermaid could not parse the diagram near line ${line}. Check the source at the highlighted location.`
+      : "Mermaid could not parse this diagram. Check the source near your latest change.",
+    ...(range ? { range } : {}),
+    ...(details ? { details } : {}),
+  };
+}
+
 function invalidParse(
   source: string,
   error: unknown,
@@ -118,19 +168,17 @@ function invalidParse(
     typeof error === "object" && error !== null
       ? (error as MermaidParseError)
       : undefined;
-  const range = parseError ? parseErrorRange(source, parseError) : undefined;
+  const friendly = friendlyParseDiagnostic(source, parseError);
   return {
     valid: false,
     diagnostics: [
       ...diagnostics,
       {
         code: "mermaid.parse",
-        message:
-          typeof parseError?.message === "string"
-            ? parseError.message
-            : "Mermaid could not parse this diagram.",
+        message: friendly.message,
         severity: "error",
-        ...(range ? { range } : {}),
+        ...(friendly.range ? { range: friendly.range } : {}),
+        ...(friendly.details ? { details: friendly.details } : {}),
         path: "semantic",
       },
     ],
@@ -249,6 +297,41 @@ export class MermaidDocument {
           false,
         );
         return { snapshot, patches: [] };
+      }
+      case "identify-relationship": {
+        if (!this.#sourceEditing)
+          throw new Error(
+            "Enable Allow Mermaid source edits to name this connection.",
+          );
+        const current = this.snapshot();
+        const relationship = current.model?.relationships.find(
+          ({ id }) => id === command.elementId,
+        );
+        if (!current.valid || !current.commands.visualEditing || !relationship)
+          throw new Error("Fix source errors before naming this connection.");
+        const identifiedSource = editStructure(current.source, current.model!, {
+          action: "relationship",
+          id: relationship.id,
+          authoredId: command.authoredId,
+          source: relationship.source,
+          target: relationship.target,
+          label: relationship.label,
+          kind: relationship.kind,
+          technology: relationship.technology,
+          description: relationship.description,
+          directionHint: relationship.directionHint,
+        });
+        const patched = patchManateeMetadata(identifiedSource, command.edits);
+        if (patched.state !== "valid" && patched.state !== "absent")
+          throw new Error(
+            patched.diagnostics[0]?.message ?? "Invalid presentation settings.",
+          );
+        const patch = minimalSourcePatch(current.source, patched.source);
+        return await this.#commitSource(
+          patched.source,
+          patch ? [patch] : [],
+          true,
+        );
       }
       case "replace-source":
         return await this.#replaceSource(command.source);
@@ -668,13 +751,19 @@ export class MermaidDocument {
     selectedElementId: string | undefined,
   ): MermaidDocumentSnapshot {
     const valid = parsed.valid;
+    const reconciledSelection =
+      valid &&
+      selectedElementId &&
+      !modelContains(parsed.model, selectedElementId)
+        ? undefined
+        : selectedElementId;
     return Object.freeze({
       source,
       model: valid ? parsed.model : previous?.model,
       metadata: valid ? parsed.metadata : previous?.metadata,
       scene: previous?.scene,
       diagnostics: Object.freeze([...parsed.diagnostics]),
-      selectedElementId,
+      selectedElementId: reconciledSelection,
       valid,
       previewOutdated: !valid && previous?.scene !== undefined,
       dirty: source !== this.#initialSource,
@@ -1261,7 +1350,12 @@ function selectedLabel(snapshot: MermaidDocumentSnapshot): string | undefined {
   return (
     snapshot.model?.nodes.find((item) => item.id === id)?.label ??
     snapshot.model?.groups.find((item) => item.id === id)?.label ??
-    snapshot.model?.relationships.find((item) => item.id === id)?.label ??
-    id
+    snapshot.model?.relationships.find((item) => item.id === id)?.label
+  );
+}
+
+function modelContains(model: MermaidSemanticModel, id: string): boolean {
+  return [...model.nodes, ...model.groups, ...model.relationships].some(
+    (item) => item.id === id,
   );
 }

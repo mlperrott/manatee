@@ -12,18 +12,18 @@ Unsupported Mermaid families and deferred constructs produce explicit diagnostic
 
 ## Portable workflow
 
-Open `.mmd` and `.mermaid` files with the Open control. Save writes to a File System Access handle where available and otherwise downloads the source. IndexedDB autosave records the source and last valid rendering state; the next visit offers Recover or Discard. If an older release left BPMN XML in autosave, Manatee removes it from the active document slot and offers one final download or discard action without loading an XML editor.
+Open `.mmd` and `.mermaid` files with the Open control. **Download .mmd** always downloads the current source as a portable file. IndexedDB recovery independently records the source and last valid rendering state in the current browser; the next visit offers Recover or Discard. If an older release left BPMN XML in autosave, Manatee removes it from the active document slot and offers one final download or discard action without loading an XML editor.
 
 SVG export uses the same scene as the preview. PNG export supports 2×, 3×, and 4× rasterization with white or transparent backgrounds. Copy PNG falls back to downloading when clipboard access is unavailable.
 
 ## Compatibility and limits
 
-The release targets the latest two desktop versions of Chrome, Edge, Firefox, and Safari. The Studio adapts to iPhone-sized screens and landscape. The checked envelope is 100 elements, 150 relationships, and 10 groups or lanes. A representative full render must complete within 2 seconds, and post-drag routing within 250 ms.
+The release targets the latest two desktop versions of Chrome, Edge, Firefox, and Safari. Manatee adapts to iPhone-sized screens and landscape. The checked envelope is 100 elements, 150 relationships, and 10 groups or lanes. A representative full render must complete within 2 seconds, and post-drag routing within 250 ms.
 
 The release corpus covers every supported Mermaid family, the complete process-notation starter, source and metadata preservation, invalid-source recovery, layout reconciliation, SVG/PNG output, clipboard behavior, portable filenames, desktop browsers, and mobile workflows. GitHub Actions verifies the exact `dist/client` artifact before Pages deployment.
 
 PowerPoint for Microsoft 365 accepts SVG and PNG. Google Slides accepts PNG, so use a 3× or 4× PNG for Slides.
 
-## Using the Studio on iPhone
+## Using Manatee on iPhone
 
-Use the bottom Canvas, Source, and Inspector controls to switch views. Tap a node or connection to select it, and open Inspector to choose process notation or change appearance. Drag a node to position it, or use Inspector controls for precise moves. Swipe blank canvas or a connection to scroll; Fit returns to the whole diagram. Source fields and menus remain accessible when the keyboard opens. Autosave is local to the browser; use Save for a portable copy.
+Use the bottom Canvas, Source, and Inspector controls to switch views, and use **Open documents** to change documents. Tap a node or connection to select it, and open Inspector to change its common properties or reveal advanced notation and positioning controls. Drag a node to position it. Swipe blank canvas or a connection to scroll; **Fit** returns to the whole diagram and **100%** restores actual size. Source fields and menus remain accessible when the keyboard opens. Recovery is local to the browser; use **Download .mmd** for a portable copy.

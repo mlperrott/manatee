@@ -404,6 +404,42 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.diagnostics li > span {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.diagnostic-location {
+  justify-self: start;
+  min-height: 30px;
+  padding: 4px 8px;
+  color: #7b2e22;
+  background: white;
+  border: 1px solid #e8b8aa;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.diagnostic-details summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.diagnostic-details code {
+  display: block;
+  max-height: 110px;
+  margin-top: 6px;
+  padding: 7px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f7e5df;
+  border-radius: 5px;
+}
+
 .source-panel textarea {
   width: calc(100% - 32px);
   margin: 0 16px;
@@ -560,6 +596,7 @@ button:disabled {
   box-shadow: var(--shadow);
   transform: translate(-50%, -50%);
   backdrop-filter: blur(8px);
+  z-index: 3;
 }
 
 .canvas-empty__glyph {
@@ -634,6 +671,78 @@ button:disabled {
   line-height: 1.55;
 }
 
+.canvas-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.canvas-empty__actions .button:not(.button--primary) {
+  color: var(--brand-dark);
+  background: #eef5f2;
+  border: 1px solid #c7dcd6;
+}
+
+.inline-label-editor,
+.getting-started-card {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  bottom: 58px;
+  width: min(360px, calc(100% - 32px));
+  padding: 14px;
+  color: var(--ink);
+  background: rgb(255 255 255 / 96%);
+  border: 1px solid #c9d9d7;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+}
+
+.inline-label-editor {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.inline-label-editor label {
+  display: grid;
+  flex: 1;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.inline-label-editor input,
+.inline-label-editor button,
+.getting-started-card button {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid #b9ceca;
+  border-radius: 7px;
+  background: white;
+}
+
+.getting-started-card {
+  display: grid;
+  gap: 7px;
+}
+
+.getting-started-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.getting-started-card button {
+  color: white;
+  background: var(--brand);
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .stage-footer {
   position: absolute;
   right: 16px;
@@ -661,6 +770,38 @@ button:disabled {
   cursor: default;
   display: flex;
   touch-action: pan-x pan-y pinch-zoom;
+}
+
+.mermaid-surface:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: -3px;
+}
+
+.mermaid-surface__keyboard-help {
+  position: sticky;
+  right: 10px;
+  bottom: 10px;
+  align-self: flex-end;
+  max-width: 300px;
+  margin: 10px;
+  padding: 7px 9px;
+  color: #42545e;
+  background: rgb(255 255 255 / 92%);
+  border: 1px solid #dce4e6;
+  border-radius: 7px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 
 .mermaid-surface__drawing {
@@ -1071,6 +1212,9 @@ button:disabled {
   .mobile-only {
     display: block;
   }
+  .document-tabs {
+    display: none;
+  }
   .topbar {
     grid-template-columns: auto minmax(0, 1fr);
     gap: 8px 16px;
@@ -1350,6 +1494,21 @@ button:disabled {
   .export-menu__panel > .checkbox-label {
     grid-column: span 2;
   }
+  .canvas-empty {
+    width: min(620px, calc(100% - 32px));
+    padding: 12px 16px;
+  }
+  .canvas-empty__glyph,
+  .canvas-empty > p:not(.eyebrow) {
+    display: none;
+  }
+  .canvas-empty h1 {
+    margin: 4px auto 10px;
+    font-size: 22px;
+  }
+  .canvas-empty__actions {
+    flex-wrap: nowrap;
+  }
 }
 
 /* Document workspace and progressively disclosed Studio controls. */
@@ -1370,6 +1529,26 @@ button:disabled {
   min-width: 0;
   overflow-x: auto;
   gap: 4px;
+}
+.open-documents-picker {
+  flex: 1;
+  min-width: 0;
+}
+.open-documents-picker span {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+}
+.open-documents-picker select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 8px;
+  color: var(--ink);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
 }
 .document-tab {
   display: flex;
@@ -1478,6 +1657,31 @@ button:disabled {
   gap: 16px;
   margin-top: 20px;
 }
+.gallery-result-count {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.gallery-empty {
+  grid-column: 1 / -1;
+  padding: 36px;
+  text-align: center;
+  background: white;
+  border: 1px dashed #bdcfcb;
+  border-radius: 10px;
+}
+.gallery-empty p {
+  color: var(--muted);
+}
+.gallery-empty button {
+  min-height: 40px;
+  padding: 0 12px;
+  color: var(--brand-dark);
+  background: #e8f4ef;
+  border: 1px solid var(--brand);
+  border-radius: 7px;
+  cursor: pointer;
+}
 .example-card {
   display: flex;
   flex-direction: column;
@@ -1524,6 +1728,20 @@ button:disabled {
   padding-left: 0;
   padding-right: 0;
   margin-bottom: 0;
+}
+.advanced-controls {
+  border-top: 1px solid #e4e9eb;
+}
+.advanced-controls > summary {
+  padding: 14px 18px;
+  color: #40545d;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+}
+.advanced-controls > fieldset {
+  border-top: 0;
+  padding-top: 4px;
 }
 .inspector .scope-toggle {
   flex-direction: row;
@@ -1659,6 +1877,13 @@ button:disabled {
   .document-workspace-bar {
     gap: 4px;
     padding: 4px;
+    flex-wrap: wrap;
+  }
+  .open-documents-picker {
+    flex-basis: 100%;
+  }
+  .open-documents-picker span {
+    font-size: 11px;
   }
   .document-workspace-bar > .button {
     font-size: 12px;
@@ -1692,6 +1917,23 @@ button:disabled {
   }
   .examples-gallery {
     padding: 16px;
+  }
+  .canvas-empty {
+    width: calc(100% - 28px);
+    padding: 24px 18px;
+  }
+  .canvas-empty__glyph {
+    margin-bottom: 12px;
+  }
+  .canvas-empty__actions {
+    display: grid;
+  }
+  .canvas-empty__actions .button {
+    width: 100%;
+  }
+  .inline-label-editor {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 .inspector .field-help {
@@ -1742,5 +1984,14 @@ button:disabled {
   .document-workspace-bar summary {
     min-height: 44px;
     min-width: 44px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .document-tabs {
+    display: none;
+  }
+  .document-workspace-examples {
+    display: none;
   }
 }

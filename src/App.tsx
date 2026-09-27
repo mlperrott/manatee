@@ -1,4 +1,5 @@
 import {
+  createEffect,
   createMemo,
   createSignal,
   createStore,
@@ -15,7 +16,6 @@ import {
   type MermaidDocumentSnapshot,
 } from "./mermaid";
 import { canHostBoundaryTimer } from "./mermaid/notation";
-import processExample from "./mermaid/fixtures/process-notation.mmd?raw";
 import { initialEditorUiState, sourceToggleLabel } from "./app/editorUiState";
 import { MermaidSurface } from "./app/MermaidSurface";
 import { StatusNotice } from "./app/StatusNotice";
@@ -27,6 +27,7 @@ import type {
 import { DocumentWorkspace } from "./core/document/DocumentWorkspace";
 import { PresentationPanel } from "./app/studio/PresentationPanel";
 import { StructurePanel } from "./app/studio/StructurePanel";
+import { SelectionEssentials } from "./app/studio/SelectionEssentials";
 import { ExamplesGallery } from "./app/studio/ExamplesGallery";
 import {
   studioExamples,
@@ -132,16 +133,9 @@ function boundaryAttachmentOptions(
 }
 
 function Studio() {
-  // Choose a readable example for portrait phones without rewriting imported
-  // documents or changing their semantic source on rotation.
-  const exampleSource =
-    typeof window !== "undefined" &&
-    Math.min(window.innerWidth, window.screen.width) <= 600
-      ? processExample.replace("flowchart LR", "flowchart TD")
-      : processExample;
   const [ui, setUi] = createStore(initialEditorUiState());
   const [zoom, setZoom] = createSignal(1);
-  const [fitView, setFitView] = createSignal(true);
+  const [fitView, setFitView] = createSignal(false);
   const [mobileView, setMobileView] = createSignal("canvas");
   const [galleryOpen, setGalleryOpen] = createSignal(false);
   const [boundaryAttachmentDraft, setBoundaryAttachmentDraft] =
@@ -151,6 +145,15 @@ function Studio() {
     "#ffffff" | "transparent"
   >("#ffffff");
   const [exportMessage, setExportMessage] = createSignal("");
+  const [gettingStartedComplete, setGettingStartedComplete] = createSignal(
+    typeof window !== "undefined" &&
+      window.localStorage.getItem("manatee:getting-started-complete") ===
+        "true",
+  );
+  const [inlineLabel, setInlineLabel] = createSignal<{
+    id: string;
+    value: string;
+  }>();
   const [retiredSource, setRetiredSource] = createSignal<RetiredSource>();
   const repository = new IndexedDbDocumentRepository();
   // Solid's bare-ref transform assigns these from ref={variable}.
@@ -158,13 +161,18 @@ function Studio() {
   let stage: HTMLElement | undefined;
   // oxlint-disable-next-line no-unassigned-vars
   let fileInput: HTMLInputElement | undefined;
+  // oxlint-disable-next-line no-unassigned-vars
+  let sourceEditor: HTMLTextAreaElement | undefined;
+  // oxlint-disable-next-line no-unassigned-vars
+  let inlineLabelInput: HTMLInputElement | undefined;
   const fileHandles = new Map<string, FileSystemFileHandle>();
+  const viewStates = new Map<string, { zoom: number; fit: boolean }>();
 
   const documentSession = new DocumentWorkspace({
     createDocument: () => new MermaidDocument(),
     store: repository,
-    initialFilename: "request-flow.mmd",
-    initialSource: exampleSource,
+    initialFilename: "untitled-flowchart.mmd",
+    initialSource: newDocumentSources.flowchart,
   });
   const [documentState, setDocumentState] = createSignal(
     documentSession.state(),
@@ -188,6 +196,25 @@ function Studio() {
   const source = createMemo(() => documentState().source);
   const filename = createMemo(() => documentState().filename);
   const recovery = createMemo(() => documentState().recovery);
+  const emptyFlowchart = createMemo(() => {
+    const model = snapshot()?.model;
+    return (
+      model?.family === "flowchart" &&
+      model.nodes.length === 0 &&
+      model.groups.length === 0 &&
+      model.relationships.length === 0
+    );
+  });
+  const gettingStartedStep = createMemo<
+    "first" | "second" | "connection" | undefined
+  >(() => {
+    if (gettingStartedComplete()) return;
+    const model = snapshot()?.model;
+    if (model?.family !== "flowchart" || model.relationships.length > 0) return;
+    if (model.nodes.length === 0) return "first";
+    if (model.nodes.length === 1) return "second";
+    return "connection";
+  });
   const boundaryAttachments = createMemo(() =>
     boundaryAttachmentOptions(snapshot()),
   );
@@ -241,16 +268,149 @@ function Studio() {
   const applicable = (type: PresentationCommandType): boolean =>
     action(type).state !== "inapplicable";
 
-  const resetView = () => {
-    setZoom(1);
-    setFitView(true);
+  const applyView = (id: string, fit: boolean) => {
+    const saved = viewStates.get(id) ?? { zoom: 1, fit };
+    viewStates.set(id, saved);
+    setZoom(saved.zoom);
+    setFitView(saved.fit);
     setMobileView("canvas");
   };
+  const updateZoom = (value: number) => {
+    setZoom(value);
+    const id = documentSession.activeId();
+    const current = viewStates.get(id);
+    if (id) viewStates.set(id, { zoom: value, fit: current?.fit ?? false });
+  };
+  const updateFit = (value: boolean) => {
+    setFitView(value);
+    const id = documentSession.activeId();
+    const current = viewStates.get(id);
+    if (id) viewStates.set(id, { zoom: current?.zoom ?? 1, fit: value });
+  };
+  const selectDocument = (id: string) => {
+    documentSession.select(id);
+    applyView(id, true);
+  };
+  const isUntouchedGuidedBlank = () => {
+    const current = snapshot();
+    const tab = documentSession.activeTab();
+    return (
+      current?.model?.family === "flowchart" &&
+      current.model.nodes.length === 0 &&
+      current.model.relationships.length === 0 &&
+      tab?.source === newDocumentSources.flowchart &&
+      tab.savedSource === newDocumentSources.flowchart
+    );
+  };
+  const finishGettingStarted = () => {
+    window.localStorage.setItem("manatee:getting-started-complete", "true");
+    setGettingStartedComplete(true);
+  };
+  const nextElementId = (prefix: string) => {
+    const ids = new Set(
+      [
+        ...(snapshot()?.model?.nodes ?? []),
+        ...(snapshot()?.model?.groups ?? []),
+        ...(snapshot()?.model?.relationships ?? []),
+      ].map(({ id }) => id),
+    );
+    let number = 1;
+    while (ids.has(`${prefix}_${number}`)) number += 1;
+    return `${prefix}_${number}`;
+  };
+  const editLabelInline = (id: string, value: string) => {
+    setInlineLabel({ id, value });
+    requestAnimationFrame(() => {
+      inlineLabelInput?.focus();
+      inlineLabelInput?.select();
+    });
+  };
+  const addGuidedNode = async () => {
+    const id = nextElementId("node");
+    const success = await executeStudio({
+      type: "edit-structure",
+      edit: {
+        action: "node",
+        id,
+        label: "New node",
+        kind: "rectangle",
+        classes: [],
+      },
+    });
+    if (!success) return;
+    await execute({ type: "select", elementId: id });
+    editLabelInline(id, "New node");
+  };
+  const commitInlineLabel = async () => {
+    const draft = inlineLabel();
+    const node = snapshot()?.model?.nodes.find(({ id }) => id === draft?.id);
+    if (!draft || !node) {
+      setInlineLabel(undefined);
+      return;
+    }
+    const value = draft.value.trim() || "New node";
+    const success = await executeStudio({
+      type: "edit-structure",
+      edit: {
+        action: "node",
+        id: node.id,
+        label: value,
+        kind: node.kind,
+        ...(node.parentId ? { parentId: node.parentId } : {}),
+        technology: node.technology,
+        description: node.description,
+        classes: node.classes,
+      },
+    });
+    if (success) setInlineLabel(undefined);
+  };
+  const connectGuidedNodes = async () => {
+    const nodes = snapshot()?.model?.nodes ?? [];
+    if (nodes.length < 2) return;
+    const id = nextElementId("connection");
+    const success = await executeStudio({
+      type: "edit-structure",
+      edit: {
+        action: "relationship",
+        id,
+        authoredId: id,
+        source: nodes[0]!.id,
+        target: nodes[1]!.id,
+        label: "",
+        kind: "arrow_point",
+        technology: "",
+        description: "",
+      },
+    });
+    if (success) finishGettingStarted();
+  };
+  const focusSourceForPaste = async () => {
+    if (snapshot()?.sourceEditing === false)
+      await execute({ type: "set-source-editing", allowed: true });
+    setUi((draft) => {
+      draft.sourceOpen = true;
+    });
+    setMobileView("source");
+    requestAnimationFrame(() => {
+      sourceEditor?.focus();
+      sourceEditor?.select();
+    });
+  };
+  const showSourceRange = (range: { start: number; end: number }) => {
+    setUi((draft) => {
+      draft.sourceOpen = true;
+    });
+    setMobileView("source");
+    requestAnimationFrame(() => {
+      sourceEditor?.focus();
+      sourceEditor?.setSelectionRange(range.start, range.end);
+    });
+  };
   const openExample = async (example: StudioExample) => {
-    resetView();
     setGalleryOpen(false);
+    const replacedId = isUntouchedGuidedBlank() ? activeId() : undefined;
     const portrait = Math.min(window.innerWidth, window.screen.width) <= 600;
-    await documentSession.open(
+    const id = await documentSession.open(
       {
         filename: `${example.id}.mmd`,
         source: portrait
@@ -260,9 +420,14 @@ function Studio() {
       true,
       example.id,
     );
+    viewStates.set(id, { zoom: 1, fit: true });
+    applyView(id, true);
+    if (replacedId && replacedId !== id) {
+      documentSession.close(replacedId);
+      fileHandles.delete(replacedId);
+      viewStates.delete(replacedId);
+    }
   };
-  const openMermaid = () =>
-    openExample(studioExamples.find((example) => example.id === "process")!);
   const openFile = async (file: File, handle?: FileSystemFileHandle) => {
     try {
       const documentSource = await file.text();
@@ -270,25 +435,28 @@ function Studio() {
         throw new Error(
           "BPMN XML is no longer supported. Open a Mermaid document instead.",
         );
-      resetView();
       const id = await documentSession.open(
         { filename: file.name, source: documentSource },
         false,
       );
+      viewStates.set(id, { zoom: 1, fit: true });
+      applyView(id, true);
       if (handle) fileHandles.set(id, handle);
     } catch (error) {
       fail(error);
     }
   };
   const newDocument = async (family: MermaidFamily) => {
-    resetView();
-    await documentSession.open(
+    const id = await documentSession.open(
       {
         filename: `untitled-${family}.mmd`,
         source: newDocumentSources[family],
       },
       true,
     );
+    const fit = family !== "flowchart";
+    viewStates.set(id, { zoom: 1, fit });
+    applyView(id, fit);
   };
   const closeDocument = (id: string) => {
     if (
@@ -298,7 +466,9 @@ function Studio() {
       return;
     documentSession.close(id);
     fileHandles.delete(id);
-    resetView();
+    viewStates.delete(id);
+    const next = documentSession.activeId();
+    if (next) applyView(next, true);
   };
 
   const chooseFile = async () => {
@@ -338,20 +508,12 @@ function Studio() {
     if (!current) return;
     const id = activeId();
     const savedSource = source();
-    const fileHandle = fileHandles.get(id);
     try {
-      if (fileHandle?.createWritable) {
-        const writable = await fileHandle.createWritable();
-        await writable.write(savedSource);
-        await writable.close();
-        setExportMessage("Document saved to its original file.");
-      } else {
-        downloadBlob(
-          new Blob([savedSource], { type: "text/plain;charset=utf-8" }),
-          filename(),
-        );
-        setExportMessage("Portable document downloaded.");
-      }
+      downloadBlob(
+        new Blob([savedSource], { type: "text/plain;charset=utf-8" }),
+        filename(),
+      );
+      setExportMessage("Portable .mmd downloaded.");
       documentSession.markSaved(id, savedSource);
     } catch (error) {
       fail(error);
@@ -417,11 +579,40 @@ function Studio() {
     }
   };
 
+  createEffect(exportMessage, (message) => {
+    if (!message) return;
+    const timeout = window.setTimeout(() => setExportMessage(""), 4500);
+    return () => window.clearTimeout(timeout);
+  });
+
+  createEffect(
+    () => ({
+      relationships: snapshot()?.model?.relationships.length ?? 0,
+      complete: gettingStartedComplete(),
+    }),
+    ({ relationships, complete }) => {
+      if (relationships > 0 && !complete) finishGettingStarted();
+    },
+  );
+
+  createEffect(
+    () => ({ id: activeId(), current: snapshot() }),
+    ({ id, current }) => {
+      if (!id || !current?.scene || viewStates.has(id)) return;
+      const fit =
+        current.model !== undefined &&
+        current.model.nodes.length + current.model.groups.length > 2;
+      viewStates.set(id, { zoom: 1, fit });
+      setZoom(1);
+      setFitView(fit);
+    },
+  );
+
   onSettled(() => {
     void documentSession
       .initialize({
-        filename: "request-flow.mmd",
-        source: exampleSource,
+        filename: "untitled-flowchart.mmd",
+        source: newDocumentSources.flowchart,
       })
       .then(async () => setRetiredSource(await repository.loadRetiredSource()))
       .catch(fail);
@@ -491,7 +682,7 @@ function Studio() {
           </span>
           <span>
             <strong>Manatee</strong>
-            <small>Diagram studio</small>
+            <small>Diagram editor</small>
           </span>
         </div>
         <div class="document-title" aria-label="Current document">
@@ -511,7 +702,7 @@ function Studio() {
               tabs().find((tab) => tab.id === activeId())?.savedSource
             }
           >
-            <span class="dirty-badge">Unsaved</span>
+            <span class="dirty-badge">Changes since last download</span>
           </Show>
         </div>
         <nav class="topbar__actions" aria-label="Document actions">
@@ -540,9 +731,9 @@ function Studio() {
           <button
             class="button button--quiet desktop-only"
             type="button"
-            onClick={() => void openMermaid()}
+            onClick={() => setGalleryOpen(true)}
           >
-            Process example
+            Examples
           </button>
           <button
             class="button button--quiet"
@@ -550,7 +741,7 @@ function Studio() {
             disabled={!snapshot()}
             onClick={() => void savePortableDocument()}
           >
-            Save
+            Download .mmd
           </button>
           <details class="export-menu">
             <summary class="button button--quiet">Export</summary>
@@ -605,22 +796,13 @@ function Studio() {
               </button>
             </div>
           </details>
-          <details class="export-menu mobile-only examples-menu">
-            <summary class="button button--quiet">Examples</summary>
-            <div
-              class="export-menu__panel"
-              onClick={(event) => {
-                event.currentTarget.closest("details")?.removeAttribute("open");
-              }}
-            >
-              <button type="button" onClick={() => setGalleryOpen(true)}>
-                Browse examples
-              </button>
-              <button type="button" onClick={() => void openMermaid()}>
-                Process example
-              </button>
-            </div>
-          </details>
+          <button
+            class="button button--quiet mobile-only"
+            type="button"
+            onClick={() => setGalleryOpen(true)}
+          >
+            Examples
+          </button>
           <button
             class="button button--primary desktop-only"
             type="button"
@@ -669,8 +851,7 @@ function Studio() {
                               list.length) %
                             list.length;
                     const next = list[nextIndex]!;
-                    documentSession.select(next.id);
-                    resetView();
+                    selectDocument(next.id);
                     requestAnimationFrame(() =>
                       document
                         .getElementById(`document-tab-${next.id}`)
@@ -679,8 +860,7 @@ function Studio() {
                   }}
                   aria-selected={tab().id === activeId() ? "true" : "false"}
                   onClick={() => {
-                    documentSession.select(tab().id);
-                    resetView();
+                    selectDocument(tab().id);
                   }}
                 >
                   {tab().filename}
@@ -698,6 +878,34 @@ function Studio() {
             )}
           </For>
         </div>
+        <label class="open-documents-picker mobile-only">
+          <span>Open documents ({tabs().length})</span>
+          <select
+            aria-label={`Open documents (${tabs().length})`}
+            value={activeId()}
+            onChange={(event) => selectDocument(event.currentTarget.value)}
+          >
+            <For each={tabs()} keyed={(tab) => tab.id}>
+              {(tab) => (
+                <option value={tab().id}>
+                  {tab().filename}
+                  {tab().source !== tab().savedSource
+                    ? " — changes since download"
+                    : ""}
+                </option>
+              )}
+            </For>
+          </select>
+        </label>
+        <button
+          class="button mobile-only close-current-document"
+          type="button"
+          aria-label="Close active diagram"
+          disabled={tabs().length === 1}
+          onClick={() => closeDocument(activeId())}
+        >
+          ×
+        </button>
         <details class="export-menu new-document-menu">
           <summary class="button">New</summary>
           <div
@@ -721,12 +929,28 @@ function Studio() {
           </div>
         </details>
         <button
-          class="button"
+          class="button document-workspace-examples"
           type="button"
           onClick={() => setGalleryOpen(true)}
         >
-          Example gallery
+          Examples
         </button>
+        <Show when={gettingStartedComplete()}>
+          <button
+            class="button getting-started-button"
+            type="button"
+            onClick={() => {
+              void newDocument("flowchart").then(() => {
+                window.localStorage.removeItem(
+                  "manatee:getting-started-complete",
+                );
+                setGettingStartedComplete(false);
+              });
+            }}
+          >
+            Getting started
+          </button>
+        </Show>
       </div>
       <Show when={galleryOpen()}>
         <ExamplesGallery
@@ -859,6 +1083,7 @@ function Studio() {
               </p>
             </Show>
             <textarea
+              ref={sourceEditor}
               aria-label="Diagram source"
               disabled={!snapshot()}
               readonly={snapshot()?.sourceEditing === false}
@@ -905,7 +1130,28 @@ function Studio() {
                   {(item) => (
                     <li data-severity={item.severity}>
                       <strong>{item.severity}</strong>
-                      {item.message}
+                      <span>
+                        {item.message}
+                        <Show when={item.range}>
+                          {(range) => (
+                            <button
+                              type="button"
+                              class="diagnostic-location"
+                              onClick={() => showSourceRange(range())}
+                            >
+                              Show in source
+                            </button>
+                          )}
+                        </Show>
+                        <Show when={item.details}>
+                          {(details) => (
+                            <details class="diagnostic-details">
+                              <summary>Technical details</summary>
+                              <code>{details()}</code>
+                            </details>
+                          )}
+                        </Show>
+                      </span>
                     </li>
                   )}
                 </For>
@@ -961,8 +1207,8 @@ function Studio() {
                 aria-label="Zoom out"
                 onClick={() => {
                   const next = Math.max(0.1, zoom() - 0.1);
-                  setFitView(false);
-                  setZoom(next);
+                  updateFit(false);
+                  updateZoom(next);
                 }}
               >
                 −
@@ -973,8 +1219,8 @@ function Studio() {
                 aria-label="Zoom in"
                 onClick={() => {
                   const next = Math.min(2, zoom() + 0.1);
-                  setFitView(false);
-                  setZoom(next);
+                  updateFit(false);
+                  updateZoom(next);
                 }}
               >
                 +
@@ -983,10 +1229,20 @@ function Studio() {
                 type="button"
                 aria-label="Fit diagram to screen"
                 onClick={() => {
-                  setFitView(true);
+                  updateFit(true);
                 }}
               >
                 Fit
+              </button>
+              <button
+                type="button"
+                aria-label="Show diagram at 100 percent"
+                onClick={() => {
+                  updateFit(false);
+                  updateZoom(1);
+                }}
+              >
+                100%
               </button>
             </div>
           </div>
@@ -1009,7 +1265,7 @@ function Studio() {
                 height={snapshot()?.scene?.height ?? 1}
                 zoom={zoom()}
                 fitView={fitView()}
-                onZoom={setZoom}
+                onZoom={updateZoom}
                 disabled={!snapshot()?.commands.visualEditing}
                 selectedElementId={snapshot()?.selectedElementId}
                 onSelect={(id) =>
@@ -1054,6 +1310,111 @@ function Studio() {
                   });
                 }}
               />
+              <Show when={emptyFlowchart()}>
+                <div class="canvas-empty" aria-labelledby="empty-canvas-title">
+                  <div class="canvas-empty__glyph" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <p class="eyebrow">Start a flowchart</p>
+                  <h1 id="empty-canvas-title">Turn an idea into a diagram</h1>
+                  <p>
+                    Add a node visually, paste Mermaid text, or begin from a
+                    working example.
+                  </p>
+                  <div class="canvas-empty__actions">
+                    <button
+                      class="button button--primary"
+                      type="button"
+                      onClick={() => void addGuidedNode()}
+                    >
+                      Add your first node
+                    </button>
+                    <button
+                      class="button"
+                      type="button"
+                      onClick={() => void focusSourceForPaste()}
+                    >
+                      Paste Mermaid
+                    </button>
+                    <button
+                      class="button"
+                      type="button"
+                      onClick={() => setGalleryOpen(true)}
+                    >
+                      Browse examples
+                    </button>
+                  </div>
+                </div>
+              </Show>
+              <Show when={inlineLabel()} keyed>
+                {(draft) => (
+                  <form
+                    class="inline-label-editor"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void commitInlineLabel();
+                    }}
+                  >
+                    <label>
+                      Node label
+                      <input
+                        ref={inlineLabelInput}
+                        value={draft.value}
+                        onInput={(event) =>
+                          setInlineLabel({
+                            id: draft.id,
+                            value: event.currentTarget.value,
+                          })
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setInlineLabel(undefined);
+                          }
+                        }}
+                      />
+                    </label>
+                    <button type="submit">Apply label</button>
+                  </form>
+                )}
+              </Show>
+              <Show
+                when={
+                  !inlineLabel() && gettingStartedStep() !== "first"
+                    ? gettingStartedStep()
+                    : undefined
+                }
+              >
+                {(step) => (
+                  <aside class="getting-started-card" aria-live="polite">
+                    <span class="eyebrow">Getting started</span>
+                    <strong>
+                      {step() === "second"
+                        ? "Add another node"
+                        : "Connect your nodes"}
+                    </strong>
+                    <p>
+                      {step() === "second"
+                        ? "A useful flowchart needs another step."
+                        : "Connect the first two nodes to complete your first flow."}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void (step() === "second"
+                          ? addGuidedNode()
+                          : connectGuidedNodes())
+                      }
+                    >
+                      {step() === "second"
+                        ? "Add another node"
+                        : "Connect nodes"}
+                    </button>
+                  </aside>
+                )}
+              </Show>
             </Show>
           </Show>
           <div class="stage-footer">
@@ -1068,10 +1429,12 @@ function Studio() {
                       ? "Check presentation settings"
                       : "Canvas current"}
             </span>
-            <span title="Recovery is stored in this browser; Save writes a portable file.">
+            <span title="Recovery is stored only in this browser. Download .mmd creates a portable copy.">
               {documentState().workspaceSaving
-                ? "Saving recovery…"
-                : "Recovery saved"}
+                ? "Saving browser recovery…"
+                : documentState().workspaceSaveFailed
+                  ? "Browser recovery failed"
+                  : "Recovered locally in this browser"}
             </span>
           </div>
         </section>
@@ -1117,7 +1480,7 @@ function Studio() {
             <Show when={activeId()} keyed>
               {(_id) => (
                 <Show when={snapshot()}>
-                  {(readSnapshot) => (
+                  {(_readSnapshot) => (
                     <>
                       <details class="document-settings">
                         <summary>Document settings</summary>
@@ -1134,10 +1497,6 @@ function Studio() {
                           />
                         </label>
                       </details>
-                      <StructurePanel
-                        snapshot={readSnapshot()}
-                        execute={executeStudio}
-                      />
                     </>
                   )}
                 </Show>
@@ -1152,7 +1511,10 @@ function Studio() {
                   <p>
                     Select an element on the canvas to change its appearance.
                   </p>
-                  <p class="desktop-only">Arrow keys move Mermaid elements.</p>
+                  <p class="desktop-only">
+                    Arrow keys select elements. Alt or Option + arrow moves a
+                    selected node.
+                  </p>
                 </div>
               }
             >
@@ -1161,142 +1523,159 @@ function Studio() {
                 <strong>{selectedLabel(snapshot())}</strong>
                 <code>{snapshot()?.selectedElementId}</code>
               </div>
+              <Show when={snapshot()}>
+                {(readSnapshot) => (
+                  <>
+                    <SelectionEssentials
+                      snapshot={readSnapshot()}
+                      execute={executeStudio}
+                    />
+                    <PresentationPanel
+                      snapshot={readSnapshot()}
+                      execute={executeStudio}
+                    />
+                  </>
+                )}
+              </Show>
               <Show when={notationOptions(snapshot()).length > 0}>
-                <fieldset
-                  disabled={action("set-notation").state !== "available"}
-                  title={actionTitle("set-notation")}
-                >
-                  <legend>Process notation</legend>
-                  <label>
-                    Symbol{" "}
-                    <select
-                      aria-label="Process notation"
-                      value={selectedNotation(snapshot()) ?? ""}
-                      onChange={(event) => {
-                        const elementId = snapshot()?.selectedElementId;
-                        if (!elementId) return;
-                        const notation = event.currentTarget.value
-                          ? (event.currentTarget.value as NotationChoice)
-                          : undefined;
-                        const attachment = boundaryAttachments().find(
-                          ({ id }) => id === boundaryAttachment(),
-                        );
-                        void execute({
-                          type: "set-notation",
-                          elementId,
-                          notation,
-                          ...(notation === "boundary-timer" && attachment
-                            ? {
-                                boundaryTimer: {
-                                  hostId: attachment.hostId,
-                                  attachmentRelationshipId: attachment.id,
-                                },
-                              }
-                            : {}),
-                        });
-                      }}
-                    >
-                      <option value="">Ordinary Mermaid</option>
-                      <For
-                        each={notationOptions(snapshot())}
-                        keyed={(option) => option[0]}
-                      >
-                        {(option) => (
-                          <option
-                            value={option()[0]}
-                            disabled={
-                              option()[0] === "boundary-timer" &&
-                              boundaryAttachments().length === 0
-                            }
-                          >
-                            {option()[1]}
-                          </option>
-                        )}
-                      </For>
-                    </select>
-                  </label>
-                  <Show
-                    when={
-                      selectedNotation(snapshot()) === "boundary-timer" &&
-                      boundaryAttachments().length > 0
-                    }
+                <details class="advanced-controls">
+                  <summary>Process notation</summary>
+                  <fieldset
+                    disabled={action("set-notation").state !== "available"}
+                    title={actionTitle("set-notation")}
                   >
+                    <legend>Notation choice</legend>
                     <label>
-                      Timeout task{" "}
+                      Symbol{" "}
                       <select
-                        aria-label="Timeout task"
-                        value={boundaryAttachment()}
+                        aria-label="Process notation"
+                        value={selectedNotation(snapshot()) ?? ""}
                         onChange={(event) => {
-                          const attachmentId = event.currentTarget.value;
-                          setBoundaryAttachmentDraft(attachmentId);
                           const elementId = snapshot()?.selectedElementId;
+                          if (!elementId) return;
+                          const notation = event.currentTarget.value
+                            ? (event.currentTarget.value as NotationChoice)
+                            : undefined;
                           const attachment = boundaryAttachments().find(
-                            ({ id }) => id === attachmentId,
+                            ({ id }) => id === boundaryAttachment(),
                           );
-                          if (
-                            elementId &&
-                            attachment &&
-                            selectedNotation(snapshot()) === "boundary-timer"
-                          ) {
-                            void execute({
-                              type: "set-notation",
-                              elementId,
-                              notation: "boundary-timer",
-                              boundaryTimer: {
-                                hostId: attachment.hostId,
-                                attachmentRelationshipId: attachment.id,
-                                ...(currentBoundaryTimer()?.anchor
-                                  ? {
-                                      anchor: currentBoundaryTimer()!.anchor,
-                                    }
-                                  : {}),
-                              },
-                            });
-                          }
+                          void execute({
+                            type: "set-notation",
+                            elementId,
+                            notation,
+                            ...(notation === "boundary-timer" && attachment
+                              ? {
+                                  boundaryTimer: {
+                                    hostId: attachment.hostId,
+                                    attachmentRelationshipId: attachment.id,
+                                  },
+                                }
+                              : {}),
+                          });
                         }}
                       >
+                        <option value="">Ordinary Mermaid</option>
                         <For
-                          each={boundaryAttachments()}
-                          keyed={(attachment) => attachment.id}
+                          each={notationOptions(snapshot())}
+                          keyed={(option) => option[0]}
                         >
-                          {(attachment) => (
-                            <option value={attachment().id}>
-                              {attachment().label}
+                          {(option) => (
+                            <option
+                              value={option()[0]}
+                              disabled={
+                                option()[0] === "boundary-timer" &&
+                                boundaryAttachments().length === 0
+                              }
+                            >
+                              {option()[1]}
                             </option>
                           )}
                         </For>
                       </select>
                     </label>
-                  </Show>
-                  <p class="field-help">
-                    {selectedNotation(snapshot()) === "boundary-timer"
-                      ? "If this task takes too long, the timeout interrupts it and follows the timeout path."
-                      : selectedNotation(snapshot()) === "exclusive-gateway"
-                        ? "A decision follows one outgoing path."
-                        : selectedNotation(snapshot()) === "parallel-gateway"
-                          ? "All outgoing paths continue together."
-                          : selectedNotation(snapshot()) === "timer-event"
-                            ? "The process waits here until the timer finishes."
-                            : "Choose how this element communicates its role in the process."}
-                  </p>
-                  <p class="field-help">
-                    Other Mermaid viewers show the same process as a simpler
-                    diagram.
-                  </p>
-                  <Show
-                    when={
-                      notationOptions(snapshot()).some(
-                        ([value]) => value === "boundary-timer",
-                      ) && boundaryAttachments().length === 0
-                    }
-                  >
+                    <Show
+                      when={
+                        selectedNotation(snapshot()) === "boundary-timer" &&
+                        boundaryAttachments().length > 0
+                      }
+                    >
+                      <label>
+                        Timeout task{" "}
+                        <select
+                          aria-label="Timeout task"
+                          value={boundaryAttachment()}
+                          onChange={(event) => {
+                            const attachmentId = event.currentTarget.value;
+                            setBoundaryAttachmentDraft(attachmentId);
+                            const elementId = snapshot()?.selectedElementId;
+                            const attachment = boundaryAttachments().find(
+                              ({ id }) => id === attachmentId,
+                            );
+                            if (
+                              elementId &&
+                              attachment &&
+                              selectedNotation(snapshot()) === "boundary-timer"
+                            ) {
+                              void execute({
+                                type: "set-notation",
+                                elementId,
+                                notation: "boundary-timer",
+                                boundaryTimer: {
+                                  hostId: attachment.hostId,
+                                  attachmentRelationshipId: attachment.id,
+                                  ...(currentBoundaryTimer()?.anchor
+                                    ? {
+                                        anchor: currentBoundaryTimer()!.anchor,
+                                      }
+                                    : {}),
+                                },
+                              });
+                            }
+                          }}
+                        >
+                          <For
+                            each={boundaryAttachments()}
+                            keyed={(attachment) => attachment.id}
+                          >
+                            {(attachment) => (
+                              <option value={attachment().id}>
+                                {attachment().label}
+                              </option>
+                            )}
+                          </For>
+                        </select>
+                      </label>
+                    </Show>
                     <p class="field-help">
-                      For an interrupting timeout, use Create and edit structure
-                      to add a named connection from the host task to this
-                      element, then choose Interrupting timeout.
+                      {selectedNotation(snapshot()) === "boundary-timer"
+                        ? "If this task takes too long, the timeout interrupts it and follows the timeout path."
+                        : selectedNotation(snapshot()) === "exclusive-gateway"
+                          ? "A decision follows one outgoing path."
+                          : selectedNotation(snapshot()) === "parallel-gateway"
+                            ? "All outgoing paths continue together."
+                            : selectedNotation(snapshot()) === "timer-event"
+                              ? "The process waits here until the timer finishes."
+                              : "Choose how this element communicates its role in the process."}
                     </p>
-                  </Show>
-                </fieldset>
+                    <p class="field-help">
+                      Other Mermaid viewers show the same process as a simpler
+                      diagram.
+                    </p>
+                    <Show
+                      when={
+                        notationOptions(snapshot()).some(
+                          ([value]) => value === "boundary-timer",
+                        ) && boundaryAttachments().length === 0
+                      }
+                    >
+                      <p class="field-help">
+                        For an interrupting timeout, open Structure and add a
+                        named connection from the host task to this element,
+                        then choose Interrupting timeout.
+                      </p>
+                    </Show>
+                  </fieldset>
+                </details>
               </Show>
               <Show when={applicable("move")}>
                 <fieldset disabled={action("move").state !== "available"}>
@@ -1334,9 +1713,10 @@ function Studio() {
               {(_id) => (
                 <Show when={snapshot()}>
                   {(readSnapshot) => (
-                    <PresentationPanel
+                    <StructurePanel
                       snapshot={readSnapshot()}
                       execute={executeStudio}
+                      guided={gettingStartedStep() !== undefined}
                     />
                   )}
                 </Show>
