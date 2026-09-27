@@ -70,8 +70,18 @@ test("renders the enriched process starter within the render budget", async ({
   page,
 }) => {
   await page.goto("./");
+  await page
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
+    .click();
+  const example = page.getByRole("button", {
+    name: "Open Advanced process",
+    exact: true,
+  });
+  await expect(example).toBeVisible();
   const started = await page.evaluate(() => performance.now());
-  await openAdvancedProcess(page);
+  await example.click();
+  await expect(page.locator('[data-element-id="review"]')).toBeVisible();
   await expect(page.locator('[data-notation="boundary-timer"]')).toBeVisible();
   await expect(page.locator('[data-notation="message-flow"]')).toBeVisible();
   const elapsed = await page.evaluate(
