@@ -17,23 +17,150 @@ test("guides a first flowchart through two labelled nodes and a connection", asy
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Add your first node" }).click();
+  const canvas = page.getByRole("application", {
+    name: "Interactive Mermaid diagram",
+  });
+  await expect(
+    page.locator(
+      '.stage-toolbar button[aria-label="Add node"], .stage-toolbar button',
+      {
+        hasText: "Add node",
+      },
+    ),
+  ).toHaveAttribute("aria-pressed", "true");
+  await canvas.click({ position: { x: 120, y: 120 } });
   await expect(page.getByLabel("Node label")).toBeFocused();
   await page.getByLabel("Node label").fill("Start here");
-  await page.getByRole("button", { name: "Apply label" }).click();
-  await expect(page.locator('[data-element-id="node_1"]')).toContainText(
+  await page.getByRole("button", { name: "Create node" }).click();
+  await expect(page.locator('[data-element-id="start_here"]')).toContainText(
     "Start here",
   );
 
   await page.getByRole("button", { name: "Add another node" }).click();
   await page.getByLabel("Node label").fill("Finish");
-  await page.getByRole("button", { name: "Apply label" }).click();
-  await page.getByRole("button", { name: "Connect nodes" }).click();
+  await page.getByRole("button", { name: "Create node" }).click();
 
   await expect(page.locator(".relationship[data-element-id]")).toHaveCount(1);
   await expect(
     page.getByRole("button", { name: "Getting started" }),
   ).toBeVisible();
   await expect(page.getByText("Changes since last download")).toBeVisible();
+});
+
+test("quick-adds and directly connects nodes with one-step undo", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.getByRole("button", { name: "Show source" }).click();
+  const source = page.getByLabel("Diagram source");
+  const original = "flowchart LR\nA[First]\nB[Second]\n";
+  await source.fill(original);
+
+  await page.locator('[data-element-id="A"]').click();
+  await expect(page.locator(".node-quick-add")).toHaveCount(4);
+  await expect(
+    page.getByRole("toolbar", { name: "Actions for First" }),
+  ).toBeVisible();
+
+  await page.locator('.node-quick-add[data-direction="right"]').click({
+    force: true,
+  });
+  await expect(page.locator(".canvas-node-draft-preview")).toBeVisible();
+  await page.getByLabel("Node label").fill("Review request");
+  await page.getByRole("button", { name: "Create node" }).click();
+  await expect(
+    page.locator('[data-element-id="review_request"]'),
+  ).toContainText("Review request");
+  await expect(page.locator(".relationship[data-element-id]")).toHaveCount(1);
+  await expect(source).toHaveValue(/position:/u);
+  await expect(source).toHaveValue(
+    /A connection_a_review_request@--> review_request/u,
+  );
+
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.locator('[data-element-id="review_request"]')).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".relationship[data-element-id]")).toHaveCount(0);
+  await expect(source).toHaveValue(original);
+
+  await page.locator('[data-element-id="A"]').click();
+  const handle = page.locator('.node-quick-add[data-direction="right"]');
+  const target = page.locator('.node[data-element-id="B"]');
+  const handleBox = (await handle.boundingBox())!;
+  const targetBox = (await target.boundingBox())!;
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+    { steps: 5 },
+  );
+  await expect(
+    page.locator('.connection-create-target.is-active[data-node-id="B"]'),
+  ).toBeVisible();
+  await page.mouse.up();
+  await expect(page.locator(".relationship[data-element-id]")).toHaveCount(1);
+  await expect(source).toHaveValue(/A connection_a_b@--> B/u);
+});
+
+test("gates direct canvas authoring for presentation-only imports", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "protected.mmd",
+    mimeType: "text/plain",
+    buffer: Buffer.from("flowchart LR\nA[First]\nB[Second]\n"),
+  });
+  await page.locator('[data-element-id="A"]').click();
+  await expect(page.locator(".node-quick-add")).toHaveCount(4);
+  await page.locator('.node-quick-add[data-direction="right"]').click({
+    force: true,
+  });
+  await expect(page.getByText("Enable Mermaid source editing?")).toBeVisible();
+  await page.getByRole("button", { name: "Enable source editing" }).click();
+  await expect(page.getByLabel("Allow Mermaid source edits")).toBeChecked();
+});
+
+test("uses the selection action bar for focused node authoring", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.getByRole("button", { name: "Show source" }).click();
+  const source = page.getByLabel("Diagram source");
+  await source.fill("flowchart LR\nA[First]\n");
+  await page.locator('[data-element-id="A"]').click();
+
+  const actions = page.getByRole("toolbar", { name: "Actions for First" });
+  await actions.getByLabel("Canvas node type").selectOption("diamond");
+  await expect(source).toHaveValue(/A\{"First"\}/u);
+
+  await page
+    .getByRole("toolbar", { name: "Actions for First" })
+    .getByRole("button", { name: "Label" })
+    .click();
+  await page.getByLabel("Node label").fill("Renamed");
+  await page.getByRole("button", { name: "Apply label" }).click();
+  await page
+    .getByRole("toolbar", { name: "Actions for Renamed" })
+    .getByRole("button", { name: "Duplicate" })
+    .click();
+  await expect(page.getByLabel("Node label")).toHaveValue("Renamed copy");
+  await page.getByRole("button", { name: "Apply label" }).click();
+  await expect(page.locator('[data-element-id="renamed_copy"]')).toContainText(
+    "Renamed copy",
+  );
+  await page
+    .getByRole("toolbar", { name: "Actions for Renamed copy" })
+    .getByRole("button", { name: "Delete" })
+    .click();
+  await expect(page.locator('[data-element-id="renamed_copy"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.locator('[data-element-id="renamed_copy"]')).toBeVisible();
 });
 
 test("reconciles selection and separates keyboard selection from movement", async ({

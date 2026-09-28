@@ -96,6 +96,23 @@ export class CommandUnavailableError extends Error {
 export type DocumentCommand =
   | { readonly type: "set-source-editing"; readonly allowed: boolean }
   | {
+      readonly type: "create-canvas-node";
+      readonly edit: Extract<
+        import("../../mermaid/authoring").StructureEdit,
+        { readonly action: "create-node" }
+      >;
+      readonly position: { readonly x: number; readonly y: number };
+      readonly metadataEdits?: readonly MetadataEdit[];
+    }
+  | {
+      readonly type: "create-canvas-connection";
+      readonly edit: Extract<
+        import("../../mermaid/authoring").StructureEdit,
+        { readonly action: "relationship" }
+      >;
+      readonly metadataEdits?: readonly MetadataEdit[];
+    }
+  | {
       readonly type: "edit-structure";
       readonly edit: import("../../mermaid/authoring").StructureEdit;
     }

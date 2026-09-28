@@ -578,6 +578,78 @@ A --> B
     expect(document.snapshot().commands.undo).toBe(false);
     document.dispose();
   });
+
+  it("creates a positioned connected node as one undoable source transaction", async () => {
+    const original = "flowchart LR\n  start[Start]\n";
+    const document = new MermaidDocument();
+    await document.open(original);
+
+    const created = await document.execute({
+      type: "create-canvas-node",
+      edit: {
+        action: "create-node",
+        node: {
+          id: "review_request",
+          label: "Review request",
+          kind: "rectangle",
+          classes: [],
+        },
+        relationship: {
+          id: "connection_review_request",
+          source: "start",
+          label: "",
+          kind: "arrow_point",
+        },
+      },
+      position: { x: 240, y: 80 },
+      metadataEdits: [
+        {
+          type: "set",
+          path: ["elements", "nodes", "review_request", "notation"],
+          value: { type: "task" },
+        },
+        {
+          type: "set",
+          path: [
+            "elements",
+            "relationships",
+            "byId",
+            "connection_review_request",
+            "notation",
+          ],
+          value: { type: "sequence-flow" },
+        },
+      ],
+    });
+
+    expect(created.snapshot.selectedElementId).toBe("review_request");
+    expect(created.snapshot.source).toContain(
+      "start connection_review_request@--> review_request",
+    );
+    expect(created.snapshot.metadata).toMatchObject({
+      elements: {
+        nodes: {
+          review_request: {
+            position: { x: 240, y: 80 },
+            notation: { type: "task" },
+          },
+        },
+        relationships: {
+          byId: {
+            connection_review_request: {
+              notation: { type: "sequence-flow" },
+            },
+          },
+        },
+      },
+    });
+
+    const undone = await document.execute({ type: "undo" });
+    expect(undone.snapshot.source).toBe(original);
+    expect(undone.snapshot.model?.nodes.map(({ id }) => id)).toEqual(["start"]);
+    expect(undone.snapshot.commands.redo).toBe(true);
+    document.dispose();
+  });
 });
 
 describe("Mermaid compatibility diagnostics", () => {

@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onSettled } from "solid-js";
+import { createEffect, createSignal, onSettled, Show } from "solid-js";
 import type {
   Bounds,
   LayoutRelationship,
@@ -24,6 +24,7 @@ export interface MermaidSurfaceProps {
   readonly onSelect: (elementId: string | undefined) => void;
   readonly onNudge: (elementId: string, dx: number, dy: number) => void;
   readonly sourceEditing: boolean;
+  readonly actionBarVisible: boolean;
   readonly onSetDock: (
     relationshipId: string,
     endpoint: ConnectionEndpoint,
@@ -34,10 +35,93 @@ export interface MermaidSurfaceProps {
     endpoint: ConnectionEndpoint,
     nodeId: string,
   ) => void;
+  readonly placementMode: boolean;
+  readonly onArmPlacement: () => void;
+  readonly onCancelInteraction: () => void;
+  readonly onPlaceNode: (point: Point) => void;
+  readonly onQuickAdd: (
+    sourceId: string,
+    direction: CanvasDirection,
+    point?: Point,
+  ) => void;
+  readonly onConnectNodes: (sourceId: string, targetId: string) => void;
+  readonly onRequestSourceEditing: () => void;
+  readonly onEditLabel: (elementId: string) => void;
+  readonly onDuplicate: (nodeId: string) => void;
+  readonly onDelete: (elementId: string) => void;
+  readonly onChangeKind: (elementId: string, kind: string) => void;
+  readonly onOpenInspector: () => void;
+  readonly nodeKinds: readonly {
+    readonly value: string;
+    readonly label: string;
+  }[];
+  readonly connectionKinds: readonly {
+    readonly value: string;
+    readonly label: string;
+  }[];
+  readonly draft:
+    | {
+        readonly point: Point;
+        readonly label: string;
+        readonly sourceId?: string;
+      }
+    | undefined;
 }
+
+export type CanvasDirection = "top" | "right" | "bottom" | "left";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const dockSides = ["top", "right", "bottom", "left"] as const;
+
+function pointInBounds(point: Point, bounds: Bounds): boolean {
+  return (
+    point.x >= bounds.x &&
+    point.x <= bounds.x + bounds.width &&
+    point.y >= bounds.y &&
+    point.y <= bounds.y + bounds.height
+  );
+}
+
+function connectionTarget(
+  scene: MermaidScene | undefined,
+  sourceId: string,
+  point: Point,
+) {
+  return scene?.nodes.find(
+    (node) => node.id !== sourceId && pointInBounds(point, node),
+  );
+}
+
+function renderConnectionDraft(
+  container: HTMLDivElement | undefined,
+  scene: MermaidScene | undefined,
+  sourceId: string,
+  direction: CanvasDirection,
+  point: Point,
+  targetId: string | undefined,
+) {
+  const source = scene?.nodes.find((node) => node.id === sourceId);
+  const overlay = interactionOverlay(container);
+  if (!scene || !source || !overlay) return;
+  const start = dockPoint(source, direction);
+  const line = svgElement("path");
+  line.setAttribute("class", "connection-create-preview");
+  line.setAttribute("d", `M ${start.x} ${start.y} L ${point.x} ${point.y}`);
+  overlay.append(line);
+  for (const node of scene.nodes) {
+    if (node.id === sourceId) continue;
+    const rect = svgElement("rect");
+    rect.setAttribute("class", "connection-create-target");
+    if (node.id === targetId) rect.classList.add("is-active");
+    rect.dataset.nodeId = node.id;
+    rect.setAttribute("x", String(node.x));
+    rect.setAttribute("y", String(node.y));
+    rect.setAttribute("width", String(node.width));
+    rect.setAttribute("height", String(node.height));
+    rect.setAttribute("rx", "8");
+    overlay.append(rect);
+  }
+}
 
 function svgElement<K extends keyof SVGElementTagNameMap>(
   name: K,
@@ -716,6 +800,18 @@ type SurfaceDrag =
       readonly preview: RelationshipPreview;
       moved: boolean;
       target: EndpointTarget | undefined;
+    }
+  | {
+      readonly kind: "connection-create";
+      readonly sourceId: string;
+      readonly direction: CanvasDirection;
+      readonly pointerId: number;
+      readonly x: number;
+      readonly y: number;
+      readonly touch: boolean;
+      moved: boolean;
+      point: Point | undefined;
+      targetId: string | undefined;
     };
 
 export function MermaidSurface(props: MermaidSurfaceProps) {
@@ -724,6 +820,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
   let container: HTMLDivElement | undefined;
   const [size, setSize] = createSignal({ width: 0, height: 0 });
   const [announcement, setAnnouncement] = createSignal("");
+  const [interactionActive, setInteractionActive] = createSignal(false);
   let drag: SurfaceDrag | undefined;
 
   const selectAndAnnounce = (id: string | undefined) => {
@@ -771,6 +868,41 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     }
     clearInteractionOverlay(container);
     drag = undefined;
+    setInteractionActive(false);
+  };
+
+  const selectedNode = () =>
+    props.scene?.nodes.find(({ id }) => id === props.selectedElementId);
+  const selectedRelationship = () =>
+    props.scene?.relationships.find(({ id }) => id === props.selectedElementId);
+  const actionAnchor = () => {
+    const node = selectedNode();
+    if (node)
+      return {
+        x: node.x + node.width / 2,
+        y: Math.max(0, node.y - 12 / props.zoom),
+      };
+    const relationship = selectedRelationship();
+    if (!relationship) return undefined;
+    const point = midpoint(relationship.points);
+    return { x: point.x, y: point.y - 20 / props.zoom };
+  };
+  const actionBarState = () => {
+    if (!props.actionBarVisible || interactionActive()) return undefined;
+    const anchor = actionAnchor();
+    const node = selectedNode();
+    const relationship = selectedRelationship();
+    const selected = node ?? relationship;
+    return anchor && selected
+      ? { anchor, selected, node, relationship }
+      : undefined;
+  };
+  const forwardDirection = (): CanvasDirection => {
+    const direction = props.scene?.sourceModel.direction;
+    if (direction === "LR") return "right";
+    if (direction === "RL") return "left";
+    if (direction === "BT") return "top";
+    return "bottom";
   };
 
   onSettled(() => {
@@ -804,7 +936,11 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
 
   return (
     <div
-      class="diagram-surface mermaid-surface"
+      class={{
+        "diagram-surface": true,
+        "mermaid-surface": true,
+        "is-placing-node": props.placementMode,
+      }}
       ref={container}
       role="application"
       aria-label="Interactive Mermaid diagram"
@@ -812,10 +948,62 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
       aria-disabled={props.disabled ? "true" : "false"}
       tabindex={0}
       onKeyDown={(event) => {
-        if (props.disabled) return;
+        if (
+          event.target instanceof HTMLInputElement ||
+          event.target instanceof HTMLSelectElement ||
+          event.target instanceof HTMLTextAreaElement
+        )
+          return;
         if (event.key === "Escape") {
           event.preventDefault();
+          clearDrag();
+          if (props.placementMode) {
+            props.onCancelInteraction();
+            setAnnouncement("Node placement cancelled.");
+            return;
+          }
           selectAndAnnounce(undefined);
+          return;
+        }
+        if (props.disabled) return;
+        if (
+          event.key.toLowerCase() === "n" &&
+          !event.ctrlKey &&
+          !event.metaKey
+        ) {
+          event.preventDefault();
+          if (props.sourceEditing) {
+            props.onArmPlacement();
+            setAnnouncement("Node placement active. Choose a canvas position.");
+          } else props.onRequestSourceEditing();
+          return;
+        }
+        const selectedId = props.selectedElementId;
+        const selectedIsNode = props.scene?.nodes.some(
+          ({ id }) => id === selectedId,
+        );
+        if (
+          event.key === "Enter" &&
+          (event.ctrlKey || event.metaKey) &&
+          selectedId &&
+          selectedIsNode
+        ) {
+          event.preventDefault();
+          if (props.sourceEditing)
+            props.onQuickAdd(selectedId, forwardDirection());
+          else props.onRequestSourceEditing();
+          return;
+        }
+        if ((event.key === "Enter" || event.key === "F2") && selectedId) {
+          event.preventDefault();
+          if (props.sourceEditing) props.onEditLabel(selectedId);
+          else props.onRequestSourceEditing();
+          return;
+        }
+        if (event.key === "Delete" && selectedId) {
+          event.preventDefault();
+          if (props.sourceEditing) props.onDelete(selectedId);
+          else props.onRequestSourceEditing();
           return;
         }
         const items = navigationItems(props.scene);
@@ -868,6 +1056,48 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         }
         if (props.disabled || event.button !== 0) return;
         clearDrag();
+        const quickHandle =
+          event.target instanceof Element
+            ? event.target.closest<SVGGElement>(".node-quick-add")
+            : null;
+        const quickSource = quickHandle?.dataset.sourceId;
+        const quickDirection = quickHandle?.dataset.direction as
+          CanvasDirection | undefined;
+        if (quickSource && quickDirection) {
+          if (!props.sourceEditing) {
+            props.onRequestSourceEditing();
+            return;
+          }
+          drag = {
+            kind: "connection-create",
+            sourceId: quickSource,
+            direction: quickDirection,
+            pointerId: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            touch: event.pointerType === "touch",
+            moved: false,
+            point: undefined,
+            targetId: undefined,
+          };
+          setInteractionActive(true);
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.preventDefault();
+          return;
+        }
+        if (props.placementMode) {
+          if (!props.sourceEditing) {
+            props.onRequestSourceEditing();
+            return;
+          }
+          const group = elementGroup(event.target);
+          if (!group) {
+            const point = diagramPoint(container, event.clientX, event.clientY);
+            if (point) props.onPlaceNode(point);
+            event.preventDefault();
+          }
+          return;
+        }
         const group = elementGroup(event.target);
         const endpointHandle =
           event.target instanceof Element
@@ -901,6 +1131,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
               moved: false,
               target: undefined,
             };
+            setInteractionActive(true);
             renderEndpointTargets(
               container,
               props.scene,
@@ -947,6 +1178,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           snapX: undefined,
           snapY: undefined,
         };
+        if (draggableGroup) setInteractionActive(true);
         if (group) event.currentTarget.setPointerCapture(event.pointerId);
       }}
       onPointerMove={(event) => {
@@ -959,6 +1191,22 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         )
           return;
         drag.moved = true;
+        if (drag.kind === "connection-create") {
+          const point = diagramPoint(container, event.clientX, event.clientY);
+          if (!point) return;
+          const target = connectionTarget(props.scene, drag.sourceId, point);
+          drag.point = point;
+          drag.targetId = target?.id;
+          renderConnectionDraft(
+            container,
+            props.scene,
+            drag.sourceId,
+            drag.direction,
+            point,
+            target?.id,
+          );
+          return;
+        }
         if (drag.kind === "endpoint") {
           const endpointDrag = drag;
           const scene = props.scene;
@@ -1056,10 +1304,34 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
             );
           return;
         }
+        if (completed.kind === "connection-create") {
+          if (!moved) {
+            props.onQuickAdd(completed.sourceId, completed.direction);
+            return;
+          }
+          if (completed.targetId) {
+            props.onConnectNodes(completed.sourceId, completed.targetId);
+            return;
+          }
+          if (completed.point)
+            props.onQuickAdd(
+              completed.sourceId,
+              completed.direction,
+              completed.point,
+            );
+          return;
+        }
         if (moved && completed.groups.length === 0) return;
         selectAndAnnounce(completed.id);
         if (moved && completed.groups.length > 0 && completed.id)
           props.onNudge(completed.id, completed.dx, completed.dy);
+      }}
+      onDblClick={(event) => {
+        const id = elementId(event.target);
+        if (!id) return;
+        event.preventDefault();
+        if (props.sourceEditing) props.onEditLabel(id);
+        else props.onRequestSourceEditing();
       }}
     >
       <div
@@ -1068,11 +1340,143 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           width: `${props.width * props.zoom + 32}px`,
           height: `${props.height * props.zoom + 32}px`,
         }}
-        innerHTML={props.svg}
-      />
+      >
+        <div class="mermaid-surface__svg" innerHTML={props.svg} />
+        <Show when={props.draft}>
+          {(draft) => (
+            <svg
+              class="canvas-node-draft-preview"
+              viewBox={`0 0 ${props.width} ${props.height}`}
+              aria-hidden="true"
+            >
+              <Show
+                when={
+                  draft().sourceId
+                    ? props.scene?.nodes.find(
+                        ({ id }) => id === draft().sourceId,
+                      )
+                    : undefined
+                }
+                keyed
+              >
+                {(readSource) => (
+                  <line
+                    x1={readSource.x + readSource.width / 2}
+                    y1={readSource.y + readSource.height / 2}
+                    x2={draft().point.x + 70}
+                    y2={draft().point.y + 28}
+                  />
+                )}
+              </Show>
+              <rect
+                x={draft().point.x}
+                y={draft().point.y}
+                width="140"
+                height="56"
+                rx="10"
+              />
+              <text
+                x={draft().point.x + 70}
+                y={draft().point.y + 33}
+                text-anchor="middle"
+              >
+                {draft().label}
+              </text>
+            </svg>
+          )}
+        </Show>
+        <Show when={actionBarState()}>
+          {(state) => (
+            <div
+              class="canvas-action-bar"
+              role="toolbar"
+              aria-label={`Actions for ${state().selected.label || state().selected.id}`}
+              style={{
+                left: `${Math.max(180, Math.min(props.width * props.zoom - 180, state().anchor.x * props.zoom + 16))}px`,
+                top: `${Math.max(48, state().anchor.y * props.zoom + 16)}px`,
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  if (props.sourceEditing)
+                    props.onEditLabel(state().selected.id);
+                  else props.onRequestSourceEditing();
+                }}
+              >
+                Label
+              </button>
+              <Show when={state().node}>
+                <label>
+                  <span class="visually-hidden">Node type</span>
+                  <select
+                    aria-label="Canvas node type"
+                    disabled={!props.sourceEditing}
+                    value={state().node?.kind}
+                    onChange={(event) =>
+                      props.onChangeKind(
+                        state().selected.id,
+                        event.currentTarget.value,
+                      )
+                    }
+                  >
+                    {props.nodeKinds.map((kind) => (
+                      <option value={kind.value}>{kind.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (props.sourceEditing)
+                      props.onDuplicate(state().selected.id);
+                    else props.onRequestSourceEditing();
+                  }}
+                >
+                  Duplicate
+                </button>
+              </Show>
+              <Show when={state().relationship}>
+                <label>
+                  <span class="visually-hidden">Connection kind</span>
+                  <select
+                    aria-label="Canvas connection kind"
+                    disabled={!props.sourceEditing}
+                    value={state().relationship?.kind}
+                    onChange={(event) =>
+                      props.onChangeKind(
+                        state().selected.id,
+                        event.currentTarget.value,
+                      )
+                    }
+                  >
+                    {props.connectionKinds.map((kind) => (
+                      <option value={kind.value}>{kind.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </Show>
+              <button
+                type="button"
+                onClick={() => {
+                  if (props.sourceEditing) props.onDelete(state().selected.id);
+                  else props.onRequestSourceEditing();
+                }}
+              >
+                Delete
+              </button>
+              <button type="button" onClick={props.onOpenInspector}>
+                Inspector
+              </button>
+            </div>
+          )}
+        </Show>
+      </div>
       <p class="mermaid-surface__keyboard-help" id="diagram-keyboard-help">
-        Arrow keys select elements. Alt or Option + arrow moves a selected node.
-        Escape clears the selection.
+        Arrow keys select. Alt or Option + arrow moves. N adds a node. Control
+        or Command + Enter quick-adds. Enter edits. Delete removes. Escape
+        cancels.
       </p>
       <span class="visually-hidden" role="status" aria-live="polite">
         {announcement()}

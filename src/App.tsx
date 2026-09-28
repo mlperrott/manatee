@@ -17,13 +17,14 @@ import {
 } from "./mermaid";
 import { canHostBoundaryTimer } from "./mermaid/notation";
 import { initialEditorUiState, sourceToggleLabel } from "./app/editorUiState";
-import { MermaidSurface } from "./app/MermaidSurface";
+import { MermaidSurface, type CanvasDirection } from "./app/MermaidSurface";
 import { StatusNotice } from "./app/StatusNotice";
 import type {
   DocumentCommand,
   NotationChoice,
   PresentationCommandType,
 } from "./core/document/commands";
+import type { MetadataEdit, MetadataValue } from "./core/metadata/types";
 import { DocumentWorkspace } from "./core/document/DocumentWorkspace";
 import { PresentationPanel } from "./app/studio/PresentationPanel";
 import { StructurePanel } from "./app/studio/StructurePanel";
@@ -35,6 +36,13 @@ import {
   type StudioExample,
 } from "./app/studio/examples";
 import type { MermaidFamily } from "./mermaid/model";
+import { flowShapes, type StructureEdit } from "./mermaid/authoring";
+import { contentOrigin } from "./mermaid/layout/geometry";
+import type { Point } from "./mermaid/layout/types";
+import {
+  connectionKindLabels,
+  flowShapeLabels,
+} from "./app/studio/controlLabels";
 import {
   copyPngOrDownload,
   downloadBlob,
@@ -49,6 +57,35 @@ function selectedLabel(current: MermaidDocumentSnapshot | undefined): string {
   return current?.selectedElementLabel ?? "No selection";
 }
 
+function metadataRecord(value: unknown): Readonly<Record<string, unknown>> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : {};
+}
+
+function readableIdentifier(
+  label: string,
+  existing: ReadonlySet<string>,
+  fallback: string,
+): string {
+  let base = label
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, "_")
+    .replace(/^_+|_+$/gu, "")
+    .replace(/_+/gu, "_");
+  if (!base || !/^[a-z_]/u.test(base)) base = `${fallback}_${base || "item"}`;
+  if (/^(end|subgraph|direction)$/iu.test(base)) base = `${fallback}_${base}`;
+  let candidate = base;
+  let suffix = 2;
+  while (existing.has(candidate)) {
+    candidate = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
 const nodeNotations: readonly [NotationChoice, string][] = [
   ["task", "Task"],
   ["start-event", "Start event"],
@@ -59,6 +96,23 @@ const nodeNotations: readonly [NotationChoice, string][] = [
   ["boundary-timer", "Interrupting timeout"],
   ["collapsed-subprocess", "Collapsed subprocess"],
 ];
+
+const canvasNodeKinds = Object.keys(flowShapes)
+  .filter((key) => !["square", "rect"].includes(key))
+  .map((value) => ({ value, label: flowShapeLabels[value] ?? value }));
+
+const canvasConnectionKinds = [
+  "arrow_point",
+  "arrow_open",
+  "arrow_circle",
+  "arrow_cross",
+  "double_arrow_point",
+  "double_arrow_circle",
+  "double_arrow_cross",
+].map((value) => ({
+  value,
+  label: connectionKindLabels[value] ?? value,
+}));
 
 function selectedNotation(current: MermaidDocumentSnapshot | undefined) {
   const id = current?.selectedElementId;
@@ -154,6 +208,17 @@ function Studio() {
     id: string;
     value: string;
   }>();
+  const [placementMode, setPlacementMode] = createSignal(false);
+  const [sourceEditingPrompt, setSourceEditingPrompt] = createSignal(false);
+  const [canvasDraft, setCanvasDraft] = createSignal<{
+    value: string;
+    kind: string;
+    point: Point;
+    parentId?: string;
+    sourceId?: string;
+    notation?: NotationChoice;
+    copyAppearanceFromId?: string;
+  }>();
   const [retiredSource, setRetiredSource] = createSignal<RetiredSource>();
   const repository = new IndexedDbDocumentRepository();
   // Solid's bare-ref transform assigns these from ref={variable}.
@@ -165,6 +230,11 @@ function Studio() {
   let sourceEditor: HTMLTextAreaElement | undefined;
   // oxlint-disable-next-line no-unassigned-vars
   let inlineLabelInput: HTMLInputElement | undefined;
+  // oxlint-disable-next-line no-unassigned-vars
+  let canvasDraftInput: HTMLInputElement | undefined;
+  // oxlint-disable-next-line no-unassigned-vars
+  let canvasDraftForm: HTMLFormElement | undefined;
+  let canvasDraftCommitting = false;
   const fileHandles = new Map<string, FileSystemFileHandle>();
   const viewStates = new Map<string, { zoom: number; fit: boolean }>();
 
@@ -205,6 +275,10 @@ function Studio() {
       model.relationships.length === 0
     );
   });
+  const directCanvasAuthoring = createMemo(() => {
+    const family = snapshot()?.model?.family;
+    return family === "flowchart" || family === "swimlane";
+  });
   const gettingStartedStep = createMemo<
     "first" | "second" | "connection" | undefined
   >(() => {
@@ -235,6 +309,7 @@ function Studio() {
   const svg = createMemo(() => {
     const current = snapshot();
     const currentScene = current?.scene;
+    const family = current?.model?.family;
     return currentScene
       ? renderMermaidSvg(currentScene, {
           ...(current.selectedElementId
@@ -243,6 +318,8 @@ function Studio() {
           outdated: current.previewOutdated,
           title: "Manatee Mermaid diagram",
           interactive: true,
+          quickAdd: family === "flowchart" || family === "swimlane",
+          interactionScale: 1 / zoom(),
         })
       : "";
   });
@@ -306,17 +383,282 @@ function Studio() {
     window.localStorage.setItem("manatee:getting-started-complete", "true");
     setGettingStartedComplete(true);
   };
-  const nextElementId = (prefix: string) => {
-    const ids = new Set(
+  const existingIds = () =>
+    new Set(
       [
         ...(snapshot()?.model?.nodes ?? []),
         ...(snapshot()?.model?.groups ?? []),
         ...(snapshot()?.model?.relationships ?? []),
-      ].map(({ id }) => id),
+      ].flatMap((item) =>
+        "identity" in item && item.identity.kind === "authored"
+          ? [item.id, item.identity.id]
+          : [item.id],
+      ),
     );
-    let number = 1;
-    while (ids.has(`${prefix}_${number}`)) number += 1;
-    return `${prefix}_${number}`;
+  const requestSourceEditing = () => setSourceEditingPrompt(true);
+  const armNodePlacement = () => {
+    const current = snapshot();
+    if (
+      current?.model?.family !== "flowchart" &&
+      current?.model?.family !== "swimlane"
+    )
+      return;
+    if (current.sourceEditing === false) {
+      requestSourceEditing();
+      return;
+    }
+    setCanvasDraft(undefined);
+    setInlineLabel(undefined);
+    setPlacementMode(true);
+  };
+  const parentAt = (point: Point): string | undefined =>
+    snapshot()
+      ?.scene?.groups.filter(
+        (group) =>
+          point.x >= group.x &&
+          point.x <= group.x + group.width &&
+          point.y >= group.y &&
+          point.y <= group.y + group.height,
+      )
+      .sort(
+        (left, right) => left.width * left.height - right.width * right.height,
+      )
+      .at(0)?.id;
+  const localPosition = (point: Point, parentId: string | undefined) => {
+    const parent = parentId
+      ? snapshot()?.scene?.groups.find(({ id }) => id === parentId)
+      : undefined;
+    const origin = contentOrigin(parent, true);
+    return {
+      x: Math.max(0, Math.round(point.x - origin.x)),
+      y: Math.max(0, Math.round(point.y - origin.y)),
+    };
+  };
+  const nodeAppearance = (id: string): MetadataValue | undefined => {
+    const style = snapshot()?.scene?.nodes.find(
+      (node) => node.id === id,
+    )?.style;
+    return style
+      ? {
+          fill: style.fill,
+          outline: {
+            color: style.outline.color,
+            width: style.outline.width,
+            style: style.outline.style,
+          },
+          text: {
+            color: style.text.color,
+            size: style.text.size,
+            weight: style.text.weight,
+            italic: style.text.italic,
+          },
+        }
+      : undefined;
+  };
+  const nodeSettings = (id: string) =>
+    metadataRecord(
+      metadataRecord(metadataRecord(snapshot()?.metadata).elements).nodes,
+    )[id];
+  const groupNotation = (id: string | undefined) => {
+    if (!id) return undefined;
+    const elements = metadataRecord(snapshot()?.metadata).elements;
+    const groups = metadataRecord(metadataRecord(elements).groups);
+    const lanes = metadataRecord(metadataRecord(elements).lanes);
+    return metadataRecord(metadataRecord(groups[id] ?? lanes[id]).notation)
+      .type as NotationChoice | undefined;
+  };
+  const processPool = (nodeId: string): string | undefined => {
+    const model = snapshot()?.model;
+    let parent = model?.nodes.find(({ id }) => id === nodeId)?.parentId;
+    let lane: string | undefined;
+    while (parent) {
+      const notation = groupNotation(parent);
+      if (notation === "pool") return parent;
+      if (notation === "lane") lane = parent;
+      parent = model?.groups.find(({ id }) => id === parent)?.parentId;
+    }
+    return lane;
+  };
+  const connectionNotation = (
+    sourceId: string,
+    targetId: string,
+  ): NotationChoice | undefined => {
+    const scene = snapshot()?.scene;
+    const source = scene?.nodes.find(({ id }) => id === sourceId);
+    const target = scene?.nodes.find(({ id }) => id === targetId);
+    const sourcePool = processPool(sourceId);
+    const targetPool = processPool(targetId);
+    if (sourcePool && targetPool && sourcePool !== targetPool)
+      return "message-flow";
+    if (source?.notation || target?.notation || sourcePool || targetPool)
+      return "sequence-flow";
+    return undefined;
+  };
+  const collisionFreePoint = (
+    point: Point,
+    direction: CanvasDirection,
+    ignoredId?: string,
+  ): Point => {
+    const nodes = snapshot()?.scene?.nodes ?? [];
+    const candidate = { ...point };
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const collides = nodes.some(
+        (node) =>
+          node.id !== ignoredId &&
+          candidate.x < node.x + node.width + 16 &&
+          candidate.x + 140 > node.x - 16 &&
+          candidate.y < node.y + node.height + 16 &&
+          candidate.y + 56 > node.y - 16,
+      );
+      if (!collides) return candidate;
+      if (direction === "left") candidate.x -= 80;
+      else if (direction === "right") candidate.x += 80;
+      else if (direction === "top") candidate.y -= 72;
+      else candidate.y += 72;
+    }
+    return candidate;
+  };
+  const beginCanvasDraft = (
+    point: Point,
+    sourceId?: string,
+    direction: CanvasDirection = "right",
+    pointIsTopLeft = false,
+  ) => {
+    const current = snapshot();
+    if (current?.sourceEditing === false) {
+      requestSourceEditing();
+      return;
+    }
+    const sourceNode = current?.model?.nodes.find(({ id }) => id === sourceId);
+    const sourceScene = current?.scene?.nodes.find(({ id }) => id === sourceId);
+    const specialNotation =
+      sourceScene?.notation && sourceScene.notation !== "task";
+    const kind = specialNotation
+      ? "rectangle"
+      : (sourceNode?.kind ?? "rectangle");
+    const notation = specialNotation
+      ? "task"
+      : sourceScene?.notation === "task"
+        ? "task"
+        : undefined;
+    const topLeft = pointIsTopLeft
+      ? collisionFreePoint(point, direction, sourceId)
+      : { x: point.x - 70, y: point.y - 28 };
+    const parentId = sourceId ? sourceNode?.parentId : parentAt(point);
+    setPlacementMode(false);
+    setInlineLabel(undefined);
+    setCanvasDraft({
+      value: "New node",
+      kind,
+      point: topLeft,
+      ...(parentId ? { parentId } : {}),
+      ...(sourceId ? { sourceId, copyAppearanceFromId: sourceId } : {}),
+      ...(notation ? { notation } : {}),
+    });
+    requestAnimationFrame(() => {
+      canvasDraftInput?.focus();
+      canvasDraftInput?.select();
+    });
+  };
+  const beginQuickAdd = (
+    sourceId: string,
+    direction: CanvasDirection,
+    dropPoint?: Point,
+  ) => {
+    if (dropPoint) {
+      beginCanvasDraft(dropPoint, sourceId, direction, false);
+      return;
+    }
+    const source = snapshot()?.scene?.nodes.find(({ id }) => id === sourceId);
+    if (!source) return;
+    const gap = 72;
+    const point =
+      direction === "top"
+        ? { x: source.x, y: source.y - source.height - gap }
+        : direction === "right"
+          ? { x: source.x + source.width + gap, y: source.y }
+          : direction === "bottom"
+            ? { x: source.x, y: source.y + source.height + gap }
+            : { x: source.x - 140 - gap, y: source.y };
+    beginCanvasDraft(point, sourceId, direction, true);
+  };
+  const commitCanvasDraft = async () => {
+    if (canvasDraftCommitting) return;
+    const draft = canvasDraft();
+    const current = snapshot();
+    if (!draft || !current?.model) return;
+    canvasDraftCommitting = true;
+    const label = draft.value.trim() || "New node";
+    const ids = existingIds();
+    const id = readableIdentifier(label, ids, "node");
+    ids.add(id);
+    const metadataEdits: MetadataEdit[] = [];
+    const appearance = draft.copyAppearanceFromId
+      ? nodeAppearance(draft.copyAppearanceFromId)
+      : undefined;
+    if (appearance)
+      metadataEdits.push({
+        type: "set",
+        path: ["elements", "nodes", id, "style"],
+        value: appearance,
+      });
+    if (draft.notation)
+      metadataEdits.push({
+        type: "set",
+        path: ["elements", "nodes", id, "notation"],
+        value: { type: draft.notation },
+      });
+    const relationshipId = draft.sourceId
+      ? readableIdentifier(
+          `connection_${draft.sourceId}_${id}`,
+          ids,
+          "connection",
+        )
+      : undefined;
+    if (draft.sourceId && relationshipId) {
+      const notation = connectionNotation(draft.sourceId, id);
+      if (notation)
+        metadataEdits.push({
+          type: "set",
+          path: [
+            "elements",
+            "relationships",
+            "byId",
+            relationshipId,
+            "notation",
+          ],
+          value: { type: notation },
+        });
+    }
+    const success = await executeStudio({
+      type: "create-canvas-node",
+      edit: {
+        action: "create-node",
+        node: {
+          id,
+          label,
+          kind: draft.kind,
+          ...(draft.parentId ? { parentId: draft.parentId } : {}),
+          classes: [],
+        },
+        ...(draft.sourceId && relationshipId
+          ? {
+              relationship: {
+                id: relationshipId,
+                source: draft.sourceId,
+                label: "",
+                kind: "arrow_point",
+              },
+            }
+          : {}),
+      },
+      position: localPosition(draft.point, draft.parentId),
+      metadataEdits,
+    });
+    canvasDraftCommitting = false;
+    if (!success) return;
+    setCanvasDraft(undefined);
+    if (draft.sourceId) finishGettingStarted();
   };
   const editLabelInline = (id: string, value: string) => {
     setInlineLabel({ id, value });
@@ -325,64 +667,171 @@ function Studio() {
       inlineLabelInput?.select();
     });
   };
-  const addGuidedNode = async () => {
-    const id = nextElementId("node");
-    const success = await executeStudio({
-      type: "edit-structure",
-      edit: {
-        action: "node",
-        id,
-        label: "New node",
-        kind: "rectangle",
-        classes: [],
-      },
-    });
-    if (!success) return;
-    await execute({ type: "select", elementId: id });
-    editLabelInline(id, "New node");
-  };
-  const commitInlineLabel = async () => {
-    const draft = inlineLabel();
-    const node = snapshot()?.model?.nodes.find(({ id }) => id === draft?.id);
-    if (!draft || !node) {
-      setInlineLabel(undefined);
-      return;
-    }
-    const value = draft.value.trim() || "New node";
-    const success = await executeStudio({
-      type: "edit-structure",
-      edit: {
+  const structureEdit = (
+    id: string,
+    changes: { label?: string; kind?: string },
+  ): StructureEdit | undefined => {
+    const model = snapshot()?.model;
+    if (!model) return;
+    const node = model.nodes.find((item) => item.id === id);
+    if (node)
+      return {
         action: "node",
         id: node.id,
-        label: value,
-        kind: node.kind,
+        label: changes.label ?? node.label,
+        kind: changes.kind ?? node.kind,
         ...(node.parentId ? { parentId: node.parentId } : {}),
         technology: node.technology,
         description: node.description,
         classes: node.classes,
-      },
-    });
+      };
+    const group = model.groups.find((item) => item.id === id);
+    if (group)
+      return {
+        action: "group",
+        id: group.id,
+        label: changes.label ?? group.label,
+        ...(group.parentId ? { parentId: group.parentId } : {}),
+        ...(group.direction ? { direction: group.direction } : {}),
+      };
+    const relationship = model.relationships.find((item) => item.id === id);
+    if (!relationship) return;
+    return {
+      action: "relationship",
+      id: relationship.id,
+      ...(relationship.identity.kind === "authored"
+        ? { authoredId: relationship.identity.id }
+        : {}),
+      source: relationship.source,
+      target: relationship.target,
+      label: changes.label ?? relationship.label,
+      kind: changes.kind ?? relationship.kind,
+      technology: relationship.technology,
+      description: relationship.description,
+      directionHint: relationship.directionHint,
+    };
+  };
+  const updateElement = async (
+    id: string,
+    changes: { label?: string; kind?: string },
+  ) => {
+    const edit = structureEdit(id, changes);
+    return edit ? await executeStudio({ type: "edit-structure", edit }) : false;
+  };
+  const addGuidedNode = () => armNodePlacement();
+  const commitInlineLabel = async () => {
+    const draft = inlineLabel();
+    if (!draft || !structureEdit(draft.id, {})) {
+      setInlineLabel(undefined);
+      return;
+    }
+    const value = draft.value.trim() || "New node";
+    const success = await updateElement(draft.id, { label: value });
     if (success) setInlineLabel(undefined);
   };
-  const connectGuidedNodes = async () => {
-    const nodes = snapshot()?.model?.nodes ?? [];
-    if (nodes.length < 2) return;
-    const id = nextElementId("connection");
+  const connectNodes = async (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+    const ids = existingIds();
+    const id = readableIdentifier(
+      `connection_${sourceId}_${targetId}`,
+      ids,
+      "connection",
+    );
+    const notation = connectionNotation(sourceId, targetId);
     const success = await executeStudio({
-      type: "edit-structure",
+      type: "create-canvas-connection",
       edit: {
         action: "relationship",
         id,
         authoredId: id,
-        source: nodes[0]!.id,
-        target: nodes[1]!.id,
+        source: sourceId,
+        target: targetId,
         label: "",
         kind: "arrow_point",
         technology: "",
         description: "",
       },
+      ...(notation
+        ? {
+            metadataEdits: [
+              {
+                type: "set" as const,
+                path: ["elements", "relationships", "byId", id, "notation"],
+                value: { type: notation },
+              },
+            ],
+          }
+        : {}),
     });
-    if (success) finishGettingStarted();
+    if (!success) return;
+    finishGettingStarted();
+  };
+  const beginEditLabel = (id: string) => {
+    const item = [
+      ...(snapshot()?.model?.nodes ?? []),
+      ...(snapshot()?.model?.groups ?? []),
+      ...(snapshot()?.model?.relationships ?? []),
+    ].find((candidate) => candidate.id === id);
+    if (item) editLabelInline(id, item.label);
+  };
+  const deleteElement = async (id: string) => {
+    setInlineLabel(undefined);
+    setCanvasDraft(undefined);
+    await executeStudio({
+      type: "edit-structure",
+      edit: { action: "delete", id },
+    });
+  };
+  const duplicateNode = async (id: string) => {
+    const current = snapshot();
+    const node = current?.model?.nodes.find((item) => item.id === id);
+    const sceneNode = current?.scene?.nodes.find((item) => item.id === id);
+    if (!node || !sceneNode) return;
+    const label = `${node.label} copy`;
+    const duplicateId = readableIdentifier(label, existingIds(), "node");
+    const settings = metadataRecord(nodeSettings(id));
+    const metadataEdits: MetadataEdit[] = [
+      "attributes",
+      "notation",
+      "style",
+    ].flatMap((key) =>
+      settings[key] === undefined
+        ? []
+        : [
+            {
+              type: "set" as const,
+              path: ["elements", "nodes", duplicateId, key],
+              value: settings[key] as MetadataValue,
+            },
+          ],
+    );
+    const success = await executeStudio({
+      type: "create-canvas-node",
+      edit: {
+        action: "create-node",
+        node: {
+          id: duplicateId,
+          label,
+          kind: node.kind,
+          ...(node.parentId ? { parentId: node.parentId } : {}),
+          technology: node.technology,
+          description: node.description,
+          classes: node.classes,
+        },
+      },
+      position: localPosition(
+        { x: sceneNode.x + 24, y: sceneNode.y + 24 },
+        node.parentId,
+      ),
+      metadataEdits,
+    });
+    if (success) editLabelInline(duplicateId, label);
+  };
+  const openInspectorForSelection = () => {
+    setUi((draft) => {
+      draft.inspectorOpen = true;
+    });
+    setMobileView("inspector");
   };
   const focusSourceForPaste = async () => {
     if (snapshot()?.sourceEditing === false)
@@ -1170,6 +1619,25 @@ function Studio() {
             <div class="command-bar" aria-label="Edit controls">
               <button
                 type="button"
+                class={{ "is-active": placementMode() }}
+                aria-pressed={placementMode() ? "true" : "false"}
+                onClick={() =>
+                  placementMode() ? setPlacementMode(false) : armNodePlacement()
+                }
+                disabled={
+                  !directCanvasAuthoring() ||
+                  !snapshot()?.commands.visualEditing
+                }
+                title={
+                  directCanvasAuthoring()
+                    ? "Place a standalone node (N)"
+                    : "Direct canvas creation currently supports flowcharts and swimlanes."
+                }
+              >
+                Add node
+              </button>
+              <button
+                type="button"
                 onClick={() => void execute({ type: "undo" })}
                 disabled={!snapshot()?.commands.undo}
                 title={
@@ -1275,6 +1743,9 @@ function Studio() {
                   void execute({ type: "move", elementId, dx, dy })
                 }
                 sourceEditing={snapshot()?.sourceEditing !== false}
+                actionBarVisible={
+                  directCanvasAuthoring() && mobileView() === "canvas"
+                }
                 onSetDock={(elementId, endpoint, dock) =>
                   void execute({
                     type: "set-dock",
@@ -1309,8 +1780,38 @@ function Studio() {
                     },
                   });
                 }}
+                placementMode={placementMode()}
+                onArmPlacement={armNodePlacement}
+                onCancelInteraction={() => {
+                  setPlacementMode(false);
+                  setCanvasDraft(undefined);
+                }}
+                onPlaceNode={(point) => beginCanvasDraft(point)}
+                onQuickAdd={beginQuickAdd}
+                onConnectNodes={(sourceId, targetId) =>
+                  void connectNodes(sourceId, targetId)
+                }
+                onRequestSourceEditing={requestSourceEditing}
+                onEditLabel={beginEditLabel}
+                onDuplicate={(id) => void duplicateNode(id)}
+                onDelete={(id) => void deleteElement(id)}
+                onChangeKind={(id, kind) => void updateElement(id, { kind })}
+                onOpenInspector={openInspectorForSelection}
+                nodeKinds={canvasNodeKinds}
+                connectionKinds={canvasConnectionKinds}
+                draft={
+                  canvasDraft()
+                    ? {
+                        point: canvasDraft()!.point,
+                        label: canvasDraft()!.value,
+                        ...(canvasDraft()!.sourceId
+                          ? { sourceId: canvasDraft()!.sourceId }
+                          : {}),
+                      }
+                    : undefined
+                }
               />
-              <Show when={emptyFlowchart()}>
+              <Show when={emptyFlowchart() && !placementMode()}>
                 <div class="canvas-empty" aria-labelledby="empty-canvas-title">
                   <div class="canvas-empty__glyph" aria-hidden="true">
                     <span />
@@ -1348,6 +1849,66 @@ function Studio() {
                   </div>
                 </div>
               </Show>
+              <Show when={canvasDraft()}>
+                {(draft) => (
+                  <form
+                    ref={canvasDraftForm}
+                    class="inline-label-editor canvas-node-draft"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void commitCanvasDraft();
+                    }}
+                  >
+                    <label>
+                      Node label
+                      <input
+                        ref={canvasDraftInput}
+                        value={draft().value}
+                        onInput={(event) =>
+                          setCanvasDraft({
+                            ...draft(),
+                            value: event.currentTarget.value,
+                          })
+                        }
+                        onBlur={() => {
+                          window.setTimeout(() => {
+                            if (
+                              canvasDraftForm &&
+                              !canvasDraftForm.contains(document.activeElement)
+                            )
+                              void commitCanvasDraft();
+                          }, 0);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setCanvasDraft(undefined);
+                            setPlacementMode(false);
+                          }
+                        }}
+                      />
+                    </label>
+                    <label>
+                      Type
+                      <select
+                        aria-label="New node type"
+                        value={draft().kind}
+                        onChange={(event) =>
+                          setCanvasDraft({
+                            ...draft(),
+                            kind: event.currentTarget.value,
+                          })
+                        }
+                      >
+                        {canvasNodeKinds.map((kind) => (
+                          <option value={kind.value}>{kind.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button type="submit">Create node</button>
+                  </form>
+                )}
+              </Show>
               <Show when={inlineLabel()} keyed>
                 {(draft) => (
                   <form
@@ -1380,9 +1941,43 @@ function Studio() {
                   </form>
                 )}
               </Show>
+              <Show when={sourceEditingPrompt()}>
+                <aside class="getting-started-card" aria-live="polite">
+                  <span class="eyebrow">Canvas authoring</span>
+                  <strong>Enable Mermaid source editing?</strong>
+                  <p>
+                    Creating, renaming, connecting, duplicating, or deleting
+                    elements changes the Mermaid source. Presentation controls
+                    remain available without enabling it.
+                  </p>
+                  <div class="studio-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void execute({
+                          type: "set-source-editing",
+                          allowed: true,
+                        });
+                        setSourceEditingPrompt(false);
+                      }}
+                    >
+                      Enable source editing
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSourceEditingPrompt(false)}
+                    >
+                      Keep presentation-only
+                    </button>
+                  </div>
+                </aside>
+              </Show>
               <Show
                 when={
-                  !inlineLabel() && gettingStartedStep() !== "first"
+                  !inlineLabel() &&
+                  !canvasDraft() &&
+                  !sourceEditingPrompt() &&
+                  gettingStartedStep() !== "first"
                     ? gettingStartedStep()
                     : undefined
                 }
@@ -1404,13 +1999,22 @@ function Studio() {
                       type="button"
                       onClick={() =>
                         void (step() === "second"
-                          ? addGuidedNode()
-                          : connectGuidedNodes())
+                          ? beginQuickAdd(
+                              snapshot()?.model?.nodes[0]?.id ?? "",
+                              snapshot()?.model?.direction === "LR"
+                                ? "right"
+                                : snapshot()?.model?.direction === "RL"
+                                  ? "left"
+                                  : snapshot()?.model?.direction === "BT"
+                                    ? "top"
+                                    : "bottom",
+                            )
+                          : undefined)
                       }
                     >
                       {step() === "second"
                         ? "Add another node"
-                        : "Connect nodes"}
+                        : "Use a node handle to connect"}
                     </button>
                   </aside>
                 )}

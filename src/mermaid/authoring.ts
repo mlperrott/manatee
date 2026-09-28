@@ -14,6 +14,28 @@ import type {
 
 export type StructureEdit =
   | {
+      readonly action: "create-node";
+      readonly node: {
+        readonly id: string;
+        readonly label: string;
+        readonly kind: string;
+        readonly parentId?: string | undefined;
+        readonly technology?: string | undefined;
+        readonly description?: string | undefined;
+        readonly classes?: readonly string[];
+      };
+      readonly relationship?: {
+        readonly id: string;
+        readonly authoredId?: string;
+        readonly source: string;
+        readonly label: string;
+        readonly kind: string;
+        readonly technology?: string | undefined;
+        readonly description?: string | undefined;
+        readonly directionHint?: DiagramDirection | undefined;
+      };
+    }
+  | {
       readonly action: "node";
       readonly id: string;
       readonly label: string;
@@ -173,6 +195,52 @@ export function editStructure(
         type: "remove",
         path: ["elements", category, edit.id],
       });
+  } else if (edit.action === "create-node") {
+    const nodeEdit = edit.node;
+    if (all.some((item) => item.id === nodeEdit.id))
+      throw new Error("That identifier is already in use.");
+    identifier(nodeEdit.id);
+    const node: MermaidNode = {
+      id: nodeEdit.id,
+      label: nodeEdit.label,
+      kind: nodeEdit.kind,
+      parentId: nodeEdit.parentId,
+      technology: nodeEdit.technology,
+      description: nodeEdit.description,
+      classes: nodeEdit.classes ?? [],
+      style: { declarations: {} },
+    };
+    nodes = [...nodes, node];
+    if (edit.relationship) {
+      const relationshipEdit = edit.relationship;
+      if (all.some((item) => item.id === relationshipEdit.id))
+        throw new Error("That connection identifier is already in use.");
+      identifier(relationshipEdit.id);
+      if (!nodes.some((item) => item.id === relationshipEdit.source))
+        throw new Error("Choose an existing source node.");
+      if (relationshipEdit.source === node.id)
+        throw new Error("A connection cannot connect a node to itself.");
+      const authoredId = relationshipEdit.authoredId ?? relationshipEdit.id;
+      identifier(authoredId);
+      if (all.some((item) => item.id === authoredId) || authoredId === node.id)
+        throw new Error("That connection ID is already in use.");
+      relationships = [
+        ...relationships,
+        {
+          id: relationshipEdit.id,
+          source: relationshipEdit.source,
+          target: node.id,
+          label: relationshipEdit.label,
+          kind: relationshipEdit.kind,
+          technology: relationshipEdit.technology,
+          description: relationshipEdit.description,
+          directionHint: relationshipEdit.directionHint,
+          identity: { kind: "authored", id: authoredId },
+          classes: [],
+          style: { declarations: {} },
+        },
+      ];
+    }
   } else {
     const existing = all.find((item) => item.id === edit.id);
     if (!existing) identifier(edit.id);

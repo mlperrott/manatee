@@ -772,6 +772,10 @@ button:disabled {
   touch-action: pan-x pan-y pinch-zoom;
 }
 
+.mermaid-surface.is-placing-node {
+  cursor: crosshair;
+}
+
 .mermaid-surface:focus-visible {
   outline: 3px solid #2563eb;
   outline-offset: -3px;
@@ -805,9 +809,46 @@ button:disabled {
 }
 
 .mermaid-surface__drawing {
+  position: relative;
   flex-shrink: 0;
   margin: auto;
   padding: 16px;
+}
+
+.mermaid-surface__svg {
+  width: 100%;
+  height: 100%;
+}
+
+.canvas-node-draft-preview {
+  position: absolute;
+  z-index: 2;
+  inset: 16px;
+  width: calc(100% - 32px);
+  height: calc(100% - 32px);
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas-node-draft-preview line {
+  stroke: #2563eb;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.canvas-node-draft-preview rect {
+  fill: rgb(239 246 255 / 92%);
+  stroke: #2563eb;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.canvas-node-draft-preview text {
+  fill: #1e3a8a;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .mermaid-surface svg {
@@ -841,6 +882,77 @@ button:disabled {
   cursor: crosshair;
   pointer-events: all;
   touch-action: none;
+}
+
+.mermaid-surface .node-quick-add {
+  cursor: crosshair;
+  pointer-events: all;
+  touch-action: none;
+}
+
+.mermaid-surface .node-quick-add:hover circle {
+  fill: #dbeafe;
+}
+
+.mermaid-surface .connection-create-preview {
+  fill: none;
+  stroke: #2563eb;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.mermaid-surface .connection-create-target {
+  fill: rgb(37 99 235 / 5%);
+  stroke: #2563eb;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.mermaid-surface .connection-create-target.is-active {
+  fill: rgb(37 99 235 / 18%);
+  stroke-width: 3;
+}
+
+.canvas-action-bar {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: stretch;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  color: #243943;
+  background: rgb(255 255 255 / 97%);
+  border: 1px solid #c8d8d7;
+  border-radius: 9px;
+  box-shadow: 0 8px 24px rgb(38 53 61 / 16%);
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+}
+
+.canvas-action-bar button,
+.canvas-action-bar select {
+  min-height: 38px;
+  padding: 0 10px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid #e0e7e8;
+  cursor: pointer;
+  pointer-events: auto;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.canvas-action-bar button:hover,
+.canvas-action-bar select:hover {
+  background: #eef5f2;
+}
+
+.canvas-action-bar button:last-child {
+  border-right: 0;
 }
 
 .mermaid-surface .alignment-guide {

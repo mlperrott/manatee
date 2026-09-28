@@ -398,8 +398,11 @@ test("explores examples and visually authors a diagram on a phone", async ({
   await page
     .getByRole("button", { name: "Add your first node", exact: true })
     .tap();
+  await page
+    .getByRole("application", { name: "Interactive Mermaid diagram" })
+    .tap({ position: { x: 100, y: 140 } });
   await page.getByLabel("Node label").fill("Keep this document");
-  await page.getByRole("button", { name: "Apply label" }).tap();
+  await page.getByRole("button", { name: "Create node" }).tap();
   await page
     .getByRole("button", { name: "Examples", exact: true })
     .first()
@@ -412,7 +415,10 @@ test("explores examples and visually authors a diagram on a phone", async ({
   ).toContainText("simple-bpmn.mmd");
   await view(page, "Inspector");
   await page.getByText("Structure", { exact: true }).tap();
-  await page.getByRole("button", { name: "Add node", exact: true }).tap();
+  await page
+    .getByRole("complementary", { name: "Inspector" })
+    .getByRole("button", { name: "Add node", exact: true })
+    .tap();
   await page.getByLabel("Element identifier").fill("extra");
   await page.getByLabel("Element label").fill("Phone task");
   await page.getByRole("button", { name: "Create node", exact: true }).tap();

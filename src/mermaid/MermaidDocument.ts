@@ -270,6 +270,72 @@ export class MermaidDocument {
           patches: [],
         };
       }
+      case "create-canvas-node": {
+        if (!this.#sourceEditing)
+          throw new Error(
+            "Enable Allow Mermaid source edits to create a node on the canvas.",
+          );
+        const current = this.snapshot();
+        if (!current.valid || !current.commands.visualEditing || !current.model)
+          throw new Error("Fix source errors before creating a node.");
+        const structured = editStructure(
+          current.source,
+          current.model,
+          command.edit,
+        );
+        const category = "nodes";
+        const patched = patchManateeMetadata(structured, [
+          {
+            type: "set",
+            path: ["elements", category, command.edit.node.id, "position"],
+            value: command.position,
+          },
+          ...(command.metadataEdits ?? []),
+        ]);
+        if (patched.state !== "valid" && patched.state !== "absent")
+          throw new Error(
+            patched.diagnostics[0]?.message ?? "Invalid canvas node settings.",
+          );
+        const patch = minimalSourcePatch(current.source, patched.source);
+        return await this.#commitSource(
+          patched.source,
+          patch ? [patch] : [],
+          true,
+          undefined,
+          command.edit.node.id,
+        );
+      }
+      case "create-canvas-connection": {
+        if (!this.#sourceEditing)
+          throw new Error(
+            "Enable Allow Mermaid source edits to create a connection on the canvas.",
+          );
+        const current = this.snapshot();
+        if (!current.valid || !current.commands.visualEditing || !current.model)
+          throw new Error("Fix source errors before creating a connection.");
+        const structured = editStructure(
+          current.source,
+          current.model,
+          command.edit,
+        );
+        const patched = patchManateeMetadata(
+          structured,
+          command.metadataEdits ?? [],
+        );
+        if (patched.state !== "valid" && patched.state !== "absent")
+          throw new Error(
+            patched.diagnostics[0]?.message ??
+              "Invalid canvas connection settings.",
+          );
+        const patch = minimalSourcePatch(current.source, patched.source);
+        return await this.#commitSource(
+          patched.source,
+          patch ? [patch] : [],
+          true,
+          undefined,
+          command.edit.id,
+        );
+      }
       case "edit-structure": {
         if (!this.#sourceEditing)
           throw new Error(
@@ -666,6 +732,7 @@ export class MermaidDocument {
     patches: readonly SourcePatch[],
     requireValid: boolean,
     preparedScene?: MermaidScene,
+    selectedElementId?: string,
   ): Promise<CommandResult<MermaidDocumentSnapshot>> {
     const before = this.snapshot();
     if (!this.#sourceEditing && changesMermaid(before.source, source))
@@ -684,7 +751,7 @@ export class MermaidDocument {
       source,
       parsed,
       before,
-      before.selectedElementId,
+      selectedElementId ?? before.selectedElementId,
     );
     const provisional = preparedScene
       ? Object.freeze({

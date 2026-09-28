@@ -10,7 +10,12 @@ Manatee presents Mermaid-authored diagrams for technical discussions and managem
 
 **Semantic source**: The Mermaid textual description of a diagram's elements, relationships and groupings.
 
+**Connection**: An authored relationship between two diagram elements, rendered as a line in the diagram.
+_Avoid_: Edge
+
 **Mermaid document**: A Mermaid semantic source with presentation overrides in its `manatee` front-matter section.
+
+**Presentation-only mode**: A document editing state in which semantic source changes are disabled while presentation overrides remain editable.
 
 **Mermaid fallback**: The simpler process diagram shown by an ordinary Mermaid viewer, retaining the authored process structure while Manatee supplies richer BPMN notation and presentation.
 

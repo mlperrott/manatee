@@ -18,7 +18,9 @@ test("protects imported source while exposing presentation controls", async ({
   await expect(page.getByLabel("Allow Mermaid source edits")).not.toBeChecked();
   await page.getByText("Structure", { exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Add node", exact: true }),
+    page
+      .getByRole("complementary", { name: "Inspector" })
+      .getByRole("button", { name: "Add node", exact: true }),
   ).toBeDisabled();
   await page.locator('[data-element-id="A"]').click();
   await page.getByLabel("Fill colour", { exact: true }).fill("#aabbcc88");
@@ -35,7 +37,9 @@ test("protects imported source while exposing presentation controls", async ({
   await expect(page.getByLabel("Diagram source")).toHaveValue(/size: 24/);
   await page.getByLabel("Allow Mermaid source edits").check();
   await expect(
-    page.getByRole("button", { name: "Add node", exact: true }),
+    page
+      .getByRole("complementary", { name: "Inspector" })
+      .getByRole("button", { name: "Add node", exact: true }),
   ).toBeEnabled();
   await page
     .getByRole("button", { name: "Edit selected element", exact: true })
@@ -60,8 +64,11 @@ test("opens teaching examples beside edited work and restores the workspace", as
   await page
     .getByRole("button", { name: "Add your first node", exact: true })
     .click();
+  await page
+    .getByRole("application", { name: "Interactive Mermaid diagram" })
+    .click({ position: { x: 120, y: 120 } });
   await page.getByLabel("Node label").fill("My first node");
-  await page.getByRole("button", { name: "Apply label" }).click();
+  await page.getByRole("button", { name: "Create node" }).click();
   await page
     .getByRole("button", { name: "Examples", exact: true })
     .first()
@@ -92,7 +99,7 @@ test("opens teaching examples beside edited work and restores the workspace", as
   await page
     .getByRole("tab", { name: "untitled-flowchart.mmd •", exact: true })
     .click();
-  await expect(page.locator('[data-element-id="node_1"]')).toContainText(
+  await expect(page.locator('[data-element-id="my_first_node"]')).toContainText(
     "My first node",
   );
   await page
@@ -124,7 +131,10 @@ test("creates nodes, groups and connections without typing Mermaid", async ({
     ["first", "First node"],
     ["second", "Second node"],
   ]) {
-    await page.getByRole("button", { name: "Add node", exact: true }).click();
+    await page
+      .getByRole("complementary", { name: "Inspector" })
+      .getByRole("button", { name: "Add node", exact: true })
+      .click();
     await page.getByLabel("Element identifier").fill(id!);
     await page.getByLabel("Element label").fill(label!);
     await page
