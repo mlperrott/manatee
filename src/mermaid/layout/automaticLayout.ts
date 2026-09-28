@@ -1,4 +1,4 @@
-import { routeWithStatus } from "./routing";
+import { manualRoute, routeWithStatus } from "./routing";
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { ElkNode } from "elkjs/lib/elk-api";
 
@@ -21,6 +21,7 @@ import {
   groupLabelBounds,
   unionBounds,
   placeRelationshipLabels,
+  segmentIntersects,
 } from "./labels";
 import { nodeSize } from "./measure";
 import {
@@ -507,6 +508,74 @@ function relationshipDocks(settings: unknown): {
   };
 }
 
+function relationshipRoute(settings: unknown): {
+  readonly waypoints: readonly Point[];
+  readonly invalid: boolean;
+} {
+  const value = metadataRecord(metadataRecord(settings).route).waypoints;
+  if (value === undefined) return { waypoints: [], invalid: false };
+  if (!Array.isArray(value) || value.length === 0)
+    return { waypoints: [], invalid: true };
+  const waypoints: Point[] = [];
+  for (const item of value) {
+    const point = metadataRecord(item);
+    if (
+      typeof point.x !== "number" ||
+      !Number.isFinite(point.x) ||
+      typeof point.y !== "number" ||
+      !Number.isFinite(point.y)
+    )
+      return { waypoints: [], invalid: true };
+    waypoints.push({ x: point.x, y: point.y });
+  }
+  if (
+    waypoints.some((point, index) => {
+      const previous = waypoints[index - 1];
+      return previous && previous.x !== point.x && previous.y !== point.y;
+    })
+  )
+    return { waypoints: [], invalid: true };
+  return { waypoints: Object.freeze(waypoints), invalid: false };
+}
+
+function manualRouteDiagnostics(
+  relationships: readonly LayoutRelationship[],
+  nodes: readonly LayoutNode[],
+  groups: readonly LayoutGroup[],
+): DocumentDiagnostic[] {
+  const diagnostics: DocumentDiagnostic[] = [];
+  for (const relationship of relationships) {
+    if (!relationship.manualRoute) continue;
+    const obstacles: Bounds[] = [
+      ...nodes.filter(
+        ({ id }) => id !== relationship.source && id !== relationship.target,
+      ),
+      ...nodes.map(nodeLabelBounds),
+      ...groups.map(groupLabelBounds),
+      ...relationships.flatMap((candidate) =>
+        candidate.id !== relationship.id && candidate.labelBounds
+          ? [candidate.labelBounds]
+          : [],
+      ),
+    ];
+    const blocked = relationship.points
+      .slice(1)
+      .some((point, index) =>
+        obstacles.some((bounds) =>
+          segmentIntersects(relationship.points[index]!, point, bounds, 2),
+        ),
+      );
+    if (blocked)
+      diagnostics.push({
+        code: "manatee.routing.manual-conflict",
+        message: `The manual route on ${relationship.label || relationship.id} crosses visible diagram content.`,
+        severity: "warning",
+        path: `presentation.elements.relationships.${relationship.id}.route`,
+      });
+  }
+  return diagnostics;
+}
+
 export async function computeMermaidScene(
   request: MermaidLayoutRequest,
 ): Promise<MermaidScene> {
@@ -696,16 +765,43 @@ export async function computeMermaidScene(
       if (!source || !target) return [];
       const settings = relationshipMetadata(relationship, metadata);
       const docks = relationshipDocks(settings);
+      const savedRoute = relationshipRoute(settings);
+      if (savedRoute.invalid) {
+        diagnostics.push({
+          code: "manatee.routing.invalid-route",
+          message: `The manual route on ${displayLabel(relationship) || relationship.id} must contain an orthogonal sequence of finite waypoints. Automatic routing is being used.`,
+          severity: "warning",
+          path: `presentation.elements.relationships.${relationship.id}.route`,
+        });
+      }
       const hasDockLock =
         docks.sourceDock !== undefined || docks.targetDock !== undefined;
-      const routed = routeWithStatus(
-        source,
-        target,
-        hasDockLock && obstacles.length === 0
-          ? [...nodes, ...groups.map(groupLabelBounds)]
-          : obstacles,
-        docks,
-      );
+      const routed = savedRoute.waypoints.length
+        ? {
+            points: manualRoute(
+              source,
+              target,
+              savedRoute.waypoints,
+              [
+                ...nodes.filter(
+                  ({ id }) =>
+                    id !== relationship.source && id !== relationship.target,
+                ),
+                ...nodes.map(nodeLabelBounds),
+                ...groups.map(groupLabelBounds),
+              ],
+              docks,
+            ),
+            blocked: false,
+          }
+        : routeWithStatus(
+            source,
+            target,
+            hasDockLock && obstacles.length === 0
+              ? [...nodes, ...groups.map(groupLabelBounds)]
+              : obstacles,
+            docks,
+          );
       if (routed.blocked && hasDockLock) {
         diagnostics.push({
           code: "manatee.routing.dock-blocked",
@@ -723,6 +819,8 @@ export async function computeMermaidScene(
           notation: relationshipNotation(metadata, relationship),
           label: displayLabel(relationship),
           points: Object.freeze(routed.points),
+          manualRoute: savedRoute.waypoints.length > 0,
+          manualWaypoints: Object.freeze([...savedRoute.waypoints]),
           dockEditable: relationship.identity.kind !== "ambiguous",
           ...docks,
           style: computedRelationshipStyle(settings, relationship.style),
@@ -734,6 +832,9 @@ export async function computeMermaidScene(
     relationships,
     nodes,
     groups,
+  );
+  diagnostics.push(
+    ...manualRouteDiagnostics(labeledRelationships, nodes, groups),
   );
   const allBounds = [
     ...nodes.map(processNodeVisualBounds),
@@ -771,7 +872,7 @@ export function rerouteMermaidScene(scene: MermaidScene): MermaidScene {
         ...scene.groups.map(groupLabelBounds),
       ]
     : [];
-  const dockDiagnostics: DocumentDiagnostic[] = [];
+  const routingDiagnostics: DocumentDiagnostic[] = [];
   const relationships = placeRelationshipLabels(
     scene.relationships.map((relationship) => {
       const source = elementById.get(relationship.source);
@@ -780,19 +881,38 @@ export function rerouteMermaidScene(scene: MermaidScene): MermaidScene {
       const hasDockLock =
         relationship.sourceDock !== undefined ||
         relationship.targetDock !== undefined;
-      const routed = routeWithStatus(
-        source,
-        target,
-        hasDockLock && obstacles.length === 0
-          ? [...scene.nodes, ...scene.groups.map(groupLabelBounds)]
-          : obstacles,
-        {
-          sourceDock: relationship.sourceDock,
-          targetDock: relationship.targetDock,
-        },
-      );
+      const routeOptions = {
+        sourceDock: relationship.sourceDock,
+        targetDock: relationship.targetDock,
+      };
+      const routed = relationship.manualRoute
+        ? {
+            points: manualRoute(
+              source,
+              target,
+              relationship.manualWaypoints,
+              [
+                ...scene.nodes.filter(
+                  ({ id }) =>
+                    id !== relationship.source && id !== relationship.target,
+                ),
+                ...scene.nodes.map(nodeLabelBounds),
+                ...scene.groups.map(groupLabelBounds),
+              ],
+              routeOptions,
+            ),
+            blocked: false,
+          }
+        : routeWithStatus(
+            source,
+            target,
+            hasDockLock && obstacles.length === 0
+              ? [...scene.nodes, ...scene.groups.map(groupLabelBounds)]
+              : obstacles,
+            routeOptions,
+          );
       if (routed.blocked && hasDockLock) {
-        dockDiagnostics.push({
+        routingDiagnostics.push({
           code: "manatee.routing.dock-blocked",
           message: `The dock lock on ${relationship.label || relationship.id} cannot avoid another diagram element.`,
           severity: "warning",
@@ -808,9 +928,12 @@ export function rerouteMermaidScene(scene: MermaidScene): MermaidScene {
     ...scene,
     diagnostics: Object.freeze([
       ...scene.diagnostics.filter(
-        ({ code }) => code !== "manatee.routing.dock-blocked",
+        ({ code }) =>
+          code !== "manatee.routing.dock-blocked" &&
+          code !== "manatee.routing.manual-conflict",
       ),
-      ...dockDiagnostics,
+      ...routingDiagnostics,
+      ...manualRouteDiagnostics(relationships, scene.nodes, scene.groups),
     ]),
     width: Math.ceil(
       Math.max(
@@ -897,6 +1020,22 @@ export function moveMermaidScene(
     ),
     nodes,
   );
+  const movedElements = new Set([...movedGroups, ...movedNodes]);
+  const relationships = scene.relationships.map((relationship) =>
+    relationship.manualRoute &&
+    movedElements.has(relationship.source) &&
+    movedElements.has(relationship.target)
+      ? Object.freeze({
+          ...relationship,
+          manualWaypoints: Object.freeze(
+            relationship.manualWaypoints.map((point) => ({
+              x: point.x + dx,
+              y: point.y + dy,
+            })),
+          ),
+        })
+      : relationship,
+  );
   const allBounds = [...nodes.map(processNodeVisualBounds), ...groups];
   return rerouteMermaidScene(
     Object.freeze({
@@ -909,6 +1048,7 @@ export function moveMermaidScene(
       ),
       nodes: Object.freeze(nodes),
       groups: Object.freeze(groups),
+      relationships: Object.freeze(relationships),
     }),
   );
 }

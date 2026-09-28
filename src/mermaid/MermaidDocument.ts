@@ -17,7 +17,11 @@ import {
   patchManateeMetadata,
   readManateeMetadata,
 } from "../core/metadata/manateeMetadata";
-import type { MetadataEdit, MetadataValue } from "../core/metadata/types";
+import type {
+  MetadataEdit,
+  MetadataPathPart,
+  MetadataValue,
+} from "../core/metadata/types";
 import {
   applySourcePatches,
   minimalSourcePatch,
@@ -494,6 +498,10 @@ export class MermaidDocument {
         ]);
       case "set-dock":
         return await this.#edit(this.#dockEdits(command));
+      case "set-route":
+        return await this.#edit(this.#routeEdits(command));
+      case "reset-route":
+        return await this.#edit(this.#routeEdits(command));
       case "use-automatic-position":
         return await this.#edit(
           this.#automaticPositionEdits(command.elementId),
@@ -921,7 +929,7 @@ export class MermaidDocument {
     const origin = contentOrigin(parent, isNode);
     const x = item.x + command.dx - origin.x;
     const y = item.y + command.dy - origin.y;
-    return [
+    const edits: MetadataEdit[] = [
       {
         type: "set",
         path: this.#positionPath(command.elementId),
@@ -931,6 +939,48 @@ export class MermaidDocument {
         },
       },
     ];
+    const movedGroups = new Set<string>();
+    if (scene?.groups.some(({ id }) => id === item.id)) {
+      movedGroups.add(item.id);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const group of scene.groups) {
+          if (
+            group.parentId &&
+            movedGroups.has(group.parentId) &&
+            !movedGroups.has(group.id)
+          ) {
+            movedGroups.add(group.id);
+            changed = true;
+          }
+        }
+      }
+    }
+    const movedElements = new Set<string>(movedGroups);
+    movedElements.add(item.id);
+    for (const node of scene?.nodes ?? [])
+      if (node.parentId && movedGroups.has(node.parentId))
+        movedElements.add(node.id);
+    for (const relationship of scene?.relationships ?? []) {
+      if (
+        !relationship.manualRoute ||
+        !movedElements.has(relationship.source) ||
+        !movedElements.has(relationship.target)
+      )
+        continue;
+      edits.push(
+        ...this.#routeEdits({
+          type: "set-route",
+          elementId: relationship.id,
+          waypoints: relationship.manualWaypoints.map((point) => ({
+            x: point.x + command.dx,
+            y: point.y + command.dy,
+          })),
+        }),
+      );
+    }
+    return edits;
   }
 
   #appearanceEdits(
@@ -1120,6 +1170,108 @@ export class MermaidDocument {
     ];
   }
 
+  #relationshipEntry(
+    elementId: string,
+    commandType: "set-route" | "reset-route",
+  ): {
+    readonly base: readonly MetadataPathPart[];
+    readonly initialize: readonly MetadataEdit[];
+  } {
+    const relationship = this.snapshot().model!.relationships.find(
+      ({ id }) => id === elementId,
+    );
+    if (!relationship || relationship.identity.kind === "ambiguous") {
+      throw new CommandUnavailableError(
+        commandType,
+        "This connection needs a unique authored identity before its route can be changed.",
+      );
+    }
+    if (relationship.identity.kind === "authored") {
+      return {
+        base: ["elements", "relationships", "byId", relationship.identity.id],
+        initialize: [],
+      };
+    }
+    const relationships = metadataRecord(
+      metadataRecord(metadataRecord(this.snapshot().metadata).elements)
+        .relationships,
+    );
+    const entries = Array.isArray(relationships.byEndpoints)
+      ? relationships.byEndpoints
+      : [];
+    const index = entries.findIndex((entry) => {
+      const match = metadataRecord(metadataRecord(entry).match);
+      return (
+        match.source === relationship.source &&
+        match.target === relationship.target &&
+        match.kind === relationship.kind
+      );
+    });
+    const entryIndex = index < 0 ? entries.length : index;
+    const base = [
+      "elements",
+      "relationships",
+      "byEndpoints",
+      entryIndex,
+    ] as const;
+    return {
+      base,
+      initialize:
+        index < 0
+          ? [
+              {
+                type: "set",
+                path: [...base, "match"],
+                value: {
+                  source: relationship.source,
+                  target: relationship.target,
+                  kind: relationship.kind,
+                },
+              },
+            ]
+          : [],
+    };
+  }
+
+  #routeEdits(
+    command: Extract<
+      PresentationCommand,
+      { type: "set-route" | "reset-route" }
+    >,
+  ): MetadataEdit[] {
+    const entry = this.#relationshipEntry(command.elementId, command.type);
+    const path = [...entry.base, "route"] as const;
+    if (command.type === "reset-route") {
+      if (valueAt(metadataRecord(this.snapshot()), path) === undefined)
+        return [];
+      return [{ type: "remove", path }];
+    }
+    if (command.waypoints.length === 0)
+      throw new CommandUnavailableError(
+        "set-route",
+        "A manual route needs at least one waypoint.",
+      );
+    const waypoints = command.waypoints.map((point) => ({
+      x: Number(point.x.toFixed(3)),
+      y: Number(point.y.toFixed(3)),
+    }));
+    if (
+      waypoints.some(
+        (point, index) =>
+          !Number.isFinite(point.x) ||
+          !Number.isFinite(point.y) ||
+          (index > 0 &&
+            waypoints[index - 1]!.x !== point.x &&
+            waypoints[index - 1]!.y !== point.y),
+      )
+    )
+      throw new CommandUnavailableError(
+        "set-route",
+        "Manual route waypoints must form an orthogonal path.",
+      );
+    return [...entry.initialize, { type: "set", path, value: { waypoints } }];
+  }
+
   #positionPath(elementId: string): readonly string[] {
     const model = this.snapshot().model!;
     if (model.nodes.some(({ id }) => id === elementId)) {
@@ -1156,21 +1308,30 @@ export class MermaidDocument {
         .relationships,
     );
     for (const id of Object.keys(metadataRecord(relationships.byId))) {
-      if (
-        metadataRecord(metadataRecord(relationships.byId)[id]).docks !==
-        undefined
-      )
+      const entry = metadataRecord(metadataRecord(relationships.byId)[id]);
+      if (entry.docks !== undefined)
         edits.push({
           type: "remove",
           path: ["elements", "relationships", "byId", id, "docks"],
         });
+      if (entry.route !== undefined)
+        edits.push({
+          type: "remove",
+          path: ["elements", "relationships", "byId", id, "route"],
+        });
     }
     if (Array.isArray(relationships.byEndpoints)) {
       relationships.byEndpoints.forEach((entry, index) => {
-        if (metadataRecord(entry).docks !== undefined)
+        const settings = metadataRecord(entry);
+        if (settings.docks !== undefined)
           edits.push({
             type: "remove",
             path: ["elements", "relationships", "byEndpoints", index, "docks"],
+          });
+        if (settings.route !== undefined)
+          edits.push({
+            type: "remove",
+            path: ["elements", "relationships", "byEndpoints", index, "route"],
           });
       });
     }
@@ -1233,6 +1394,8 @@ export class MermaidDocument {
         "create-styling-rule": unavailable,
         "set-spacing": unavailable,
         "set-dock": unavailable,
+        "set-route": unavailable,
+        "reset-route": unavailable,
         "use-automatic-position": unavailable,
         "reset-layout": unavailable,
         "cleanup-unmatched": unavailable,
@@ -1293,6 +1456,20 @@ export class MermaidDocument {
           : relationship
             ? available
             : selectReason,
+      "set-route":
+        relationship?.identity.kind === "ambiguous"
+          ? disabled(
+              "This connection needs an authored ID before its route can be changed.",
+            )
+          : relationship
+            ? available
+            : selectReason,
+      "reset-route": relationship
+        ? current.scene?.relationships.find(({ id }) => id === relationship.id)
+            ?.manualRoute
+          ? available
+          : disabled("This connection already uses automatic routing.")
+        : selectReason,
       "use-automatic-position":
         node || group
           ? hasPosition
@@ -1301,7 +1478,7 @@ export class MermaidDocument {
           : selectReason,
       "reset-layout": hasAnyManualPosition(metadata)
         ? available
-        : disabled("No manual positions to reset."),
+        : disabled("No manual layout to reset."),
       "cleanup-unmatched":
         this.#unmatched().edits.length > 0
           ? available
@@ -1378,10 +1555,14 @@ function metadataRecord(value: unknown): Record<string, unknown> {
 
 function valueAt(
   root: Record<string, unknown>,
-  path: readonly string[],
+  path: readonly MetadataPathPart[],
 ): unknown {
   let value: unknown = root;
-  for (const part of path) value = metadataRecord(value)[part];
+  for (const part of path)
+    value =
+      typeof part === "number" && Array.isArray(value)
+        ? value[part]
+        : metadataRecord(value)[String(part)];
   return value;
 }
 
@@ -1404,10 +1585,13 @@ function hasAnyManualPosition(metadata: Record<string, unknown>): boolean {
     : [];
   return (
     positioned ||
-    [...identified, ...matched].some(
-      (entry) =>
-        Object.keys(metadataRecord(metadataRecord(entry).docks)).length > 0,
-    )
+    [...identified, ...matched].some((entry) => {
+      const settings = metadataRecord(entry);
+      return (
+        Object.keys(metadataRecord(settings.docks)).length > 0 ||
+        settings.route !== undefined
+      );
+    })
   );
 }
 

@@ -279,6 +279,59 @@ C[Third]
   await expect(page.getByLabel("Source dock")).toHaveValue("auto");
 });
 
+test("edits, keyboards, resets, and undoes an exact connection route", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "routing.mmd",
+    mimeType: "text/plain",
+    buffer: Buffer.from(`flowchart LR
+A[First] e1@--> B[Second]
+`),
+  });
+  await page
+    .locator(
+      '.relationship[data-element-id="e1"] > path:not(.relationship-hit-area)',
+    )
+    .click({ force: true });
+  const segment = page.locator(".route-segment-handle").first();
+  await expect(segment).toBeVisible();
+  const box = (await segment.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    box.x + box.width / 2 + 36,
+    box.y + box.height / 2 + 36,
+    {
+      steps: 4,
+    },
+  );
+  await page.mouse.up();
+
+  await page.getByRole("button", { name: "Show source" }).click();
+  const source = page.getByLabel("Diagram source");
+  await expect(source).toHaveValue(/route:[^]*waypoints:/u);
+  await expect(page.locator(".route-waypoint-handle").first()).toBeVisible();
+
+  await page.locator(".route-waypoint-handle").first().focus();
+  await page.locator(".route-waypoint-handle").first().press("ArrowDown");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(source).toHaveValue(/route:[^]*waypoints:/u);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(source).not.toHaveValue(/route:/u);
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+
+  await page
+    .getByRole("button", { name: "Reset route", exact: true })
+    .first()
+    .click();
+  await expect(source).not.toHaveValue(/route:/u);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(source).toHaveValue(/route:[^]*waypoints:/u);
+});
+
 test("snaps connected nodes and previews container descendants", async ({
   page,
 }) => {

@@ -87,6 +87,24 @@ function readableIdentifier(
   return candidate;
 }
 
+function nextRelationshipId(current: MermaidDocumentSnapshot): string {
+  const used = new Set(
+    [
+      ...(current.model?.nodes ?? []),
+      ...(current.model?.groups ?? []),
+      ...(current.model?.relationships ?? []),
+    ].flatMap((item) => [
+      item.id,
+      ...(item && "identity" in item && item.identity.kind === "authored"
+        ? [item.identity.id]
+        : []),
+    ]),
+  );
+  let number = 1;
+  while (used.has(`edge_${number}`)) number += 1;
+  return `edge_${number}`;
+}
+
 const nodeNotations: readonly [NotationChoice, string][] = [
   ["task", "Task"],
   ["start-event", "Start event"],
@@ -981,6 +999,7 @@ function Studio() {
     }
     return renderMermaidSvg(current.scene!, {
       title: "Manatee Mermaid diagram",
+      viewport: canvasViewport(current.scene!),
     });
   };
 
@@ -1744,7 +1763,13 @@ function Studio() {
                 }
                 sourceEditing={snapshot()?.sourceEditing !== false}
                 actionBarVisible={
-                  directCanvasAuthoring() && mobileView() === "canvas"
+                  (directCanvasAuthoring() ||
+                    Boolean(
+                      snapshot()?.scene?.relationships.some(
+                        ({ id }) => id === snapshot()?.selectedElementId,
+                      ),
+                    )) &&
+                  mobileView() === "canvas"
                 }
                 onSetDock={(elementId, endpoint, dock) =>
                   void execute({
@@ -1780,6 +1805,49 @@ function Studio() {
                     },
                   });
                 }}
+                onSetRoute={(elementId, waypoints) => {
+                  const current = snapshot();
+                  const relationship = current?.model?.relationships.find(
+                    ({ id }) => id === elementId,
+                  );
+                  if (!current || !relationship) return;
+                  if (relationship.identity.kind === "ambiguous") {
+                    if (current.sourceEditing === false) {
+                      requestSourceEditing();
+                      return;
+                    }
+                    const authoredId = nextRelationshipId(current);
+                    void execute({
+                      type: "identify-relationship",
+                      elementId,
+                      authoredId,
+                      edits: [
+                        {
+                          type: "set",
+                          path: [
+                            "elements",
+                            "relationships",
+                            "byId",
+                            authoredId,
+                            "route",
+                          ],
+                          value: {
+                            waypoints: waypoints.map(({ x, y }) => ({ x, y })),
+                          },
+                        },
+                      ],
+                    });
+                    return;
+                  }
+                  void execute({
+                    type: "set-route",
+                    elementId,
+                    waypoints,
+                  });
+                }}
+                onResetRoute={(elementId) =>
+                  void execute({ type: "reset-route", elementId })
+                }
                 placementMode={placementMode()}
                 onArmPlacement={armNodePlacement}
                 onCancelInteraction={() => {

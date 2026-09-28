@@ -47,6 +47,37 @@ describe("Manatee metadata", () => {
     expect(projectedLayout?.spacing).not.toHaveProperty("node");
   });
 
+  it("ignores an invalid route atomically while retaining other relationship settings", () => {
+    const read = readManateeMetadata(`---
+manatee:
+  version: 1
+  elements:
+    relationships:
+      byId:
+        e1:
+          style: { color: "#123456" }
+          route:
+            waypoints:
+              - { x: 20, y: 30 }
+              - { x: wrong, y: 60 }
+---
+flowchart LR
+A e1@--> B
+`);
+    expect(read.state).toBe("invalid");
+    expect(read.metadata).toMatchObject({
+      elements: {
+        relationships: { byId: { e1: { style: { color: "#123456" } } } },
+      },
+    });
+    const elements = read.metadata?.elements as
+      Record<string, unknown> | undefined;
+    const relationships = elements?.relationships as
+      { byId: { e1: Record<string, unknown> } } | undefined;
+    expect(relationships?.byId.e1.route).toBeUndefined();
+    expect(read.visualEditing).toBe(true);
+  });
+
   it("rewrites only the manatee mapping and retains its comments and unknowns", () => {
     const result = patchManateeMetadata(source, [
       { type: "set", path: ["layout", "spacing", "node"], value: 64 },

@@ -244,6 +244,48 @@ describe("Mermaid automatic layout", () => {
     });
   });
 
+  it("preserves authoritative manual waypoints and reports content conflicts", async () => {
+    const scene = await computeMermaidScene({
+      model: model(
+        [node("A"), node("B"), node("blocker")],
+        [],
+        [relationship("edge", "A", "B")],
+      ),
+      metadata: {
+        elements: {
+          nodes: {
+            A: { position: { x: 20, y: 80 } },
+            B: { position: { x: 340, y: 80 } },
+            blocker: { position: { x: 170, y: 80 } },
+          },
+          relationships: {
+            byId: {
+              edge: {
+                route: {
+                  waypoints: [
+                    { x: 120, y: 108 },
+                    { x: 300, y: 108 },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const edge = scene.relationships[0]!;
+    expect(edge.manualRoute).toBe(true);
+    expect(edge.manualWaypoints).toEqual([
+      { x: 120, y: 108 },
+      { x: 300, y: 108 },
+    ]);
+    expect(edge.points).toContainEqual({ x: 120, y: 108 });
+    expect(edge.points).toContainEqual({ x: 300, y: 108 });
+    expect(scene.diagnostics.map(({ code }) => code)).toContain(
+      "manatee.routing.manual-conflict",
+    );
+  });
+
   it.each([
     "flowchart-baseline.mmd",
     "swimlane-baseline.mmd",
@@ -322,8 +364,20 @@ describe("Mermaid SVG rendering", () => {
       selectedElementId: "edge",
     });
     expect(selected.match(/connection-endpoint-handle/gu)).toHaveLength(2);
+    expect(selected.match(/class="route-segment-handle"/gu)).toHaveLength(
+      scene.relationships[0]!.points.length - 1,
+    );
+    expect(selected.match(/class="route-waypoint-handle"/gu)).toHaveLength(
+      scene.relationships[0]!.points.length - 2,
+    );
     expect(renderMermaidExportSvg(scene)).not.toContain(
       "connection-endpoint-handle",
+    );
+    expect(renderMermaidExportSvg(scene)).not.toContain(
+      'class="route-segment-handle"',
+    );
+    expect(renderMermaidExportSvg(scene)).not.toContain(
+      'class="route-waypoint-handle"',
     );
   });
 

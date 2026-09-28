@@ -84,7 +84,7 @@ function ports(
   ].filter(({ side }) => selected === undefined || side === selected);
 }
 
-function simplify(points: readonly Point[]): Point[] {
+export function normalizeRoutePoints(points: readonly Point[]): Point[] {
   const result: Point[] = [];
   for (const point of points) {
     const b = result.at(-1),
@@ -99,6 +99,80 @@ function simplify(points: readonly Point[]): Point[] {
     result.push(point);
   }
   return result;
+}
+
+function endpointBridge(
+  port: ReturnType<typeof ports>[number],
+  waypoint: Point,
+): Point[] {
+  return port.side === "left" || port.side === "right"
+    ? [port.point, port.outside, { x: waypoint.x, y: port.outside.y }, waypoint]
+    : [
+        port.point,
+        port.outside,
+        { x: port.outside.x, y: waypoint.y },
+        waypoint,
+      ];
+}
+
+function routeScore(points: readonly Point[], obstacles: readonly Bounds[]) {
+  const crossings = points
+    .slice(1)
+    .reduce(
+      (total, point, index) =>
+        total +
+        obstacles.filter((bounds) =>
+          segmentIntersects(points[index]!, point, bounds, 2),
+        ).length,
+      0,
+    );
+  return (
+    crossings * 10000 +
+    points
+      .slice(1)
+      .reduce(
+        (length, point, index) =>
+          length +
+          Math.abs(point.x - points[index]!.x) +
+          Math.abs(point.y - points[index]!.y),
+        0,
+      ) +
+    points.length * 8
+  );
+}
+
+/** Connect authoritative interior waypoints to the current endpoint geometry.
+ * Only the endpoint legs are chosen; interior waypoint coordinates are never
+ * moved by routing. */
+export function manualRoute(
+  source: Bounds,
+  target: Bounds,
+  waypoints: readonly Point[],
+  obstacles: readonly Bounds[],
+  options: RouteOptions = {},
+): Point[] {
+  if (waypoints.length === 0) return route(source, target, obstacles, options);
+  const first = waypoints[0]!;
+  const last = waypoints.at(-1)!;
+  let best: Point[] | undefined;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const sourcePort of ports(source, options.sourceDock)) {
+    const sourcePoints = endpointBridge(sourcePort, first);
+    for (const targetPort of ports(target, options.targetDock)) {
+      const targetPoints = endpointBridge(targetPort, last).reverse();
+      const candidate = normalizeRoutePoints([
+        ...sourcePoints.slice(0, -1),
+        ...waypoints,
+        ...targetPoints.slice(1),
+      ]);
+      const score = routeScore(candidate, obstacles);
+      if (score < bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+  }
+  return best ?? route(source, target, obstacles, options);
 }
 
 /** Keep the short route when clear, otherwise choose an orthogonal detour
@@ -157,7 +231,7 @@ export function routeWithStatus(
         : undefined,
     bestScore = best ? score(best) : Infinity;
   const consider = (points: Point[]) => {
-    const candidate = simplify(points),
+    const candidate = normalizeRoutePoints(points),
       value = score(candidate);
     if (value < bestScore) {
       best = candidate;

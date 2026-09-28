@@ -31,6 +31,10 @@ export interface BoundaryTimerSettings {
 
 export type ConnectionDock = "top" | "right" | "bottom" | "left";
 export type ConnectionEndpoint = "source" | "target";
+export interface RouteWaypoint {
+  readonly x: number;
+  readonly y: number;
+}
 
 export type PresentationCommand =
   | { readonly type: "edit-metadata"; readonly edits: readonly MetadataEdit[] }
@@ -74,6 +78,12 @@ export type PresentationCommand =
       readonly endpoint: ConnectionEndpoint;
       readonly dock: ConnectionDock | undefined;
     }
+  | {
+      readonly type: "set-route";
+      readonly elementId: string;
+      readonly waypoints: readonly RouteWaypoint[];
+    }
+  | { readonly type: "reset-route"; readonly elementId: string }
   | {
       readonly type: "use-automatic-position";
       readonly elementId: string;

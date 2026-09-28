@@ -278,6 +278,74 @@ test("connections have a finger-sized hit area and remain selectable", async ({
   await expect(page.locator(".selection-summary code")).toHaveText(id!);
 });
 
+test("touch edits a route and exposes waypoint removal", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chromium");
+  await page.goto("./");
+  await view(page, "Source");
+  await page
+    .getByRole("textbox", { name: "Diagram source" })
+    .fill("flowchart LR\n  a[Start] e1@--> b[End]\n");
+  await view(page, "Canvas");
+  const hitArea = page.locator(".relationship-hit-area");
+  const target = await hitArea.evaluate((path: SVGPathElement) => {
+    const point = path.getPointAtLength(path.getTotalLength() / 2);
+    const screen = point.matrixTransform(path.getScreenCTM()!);
+    return { x: screen.x, y: screen.y };
+  });
+  await page.touchscreen.tap(target.x, target.y);
+  const segment = page.locator(".route-segment-handle").last();
+  const box = (await segment.boundingBox())!;
+  expect(box.width).toBeGreaterThanOrEqual(43);
+  expect(box.height).toBeGreaterThanOrEqual(43);
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  const routePath = page.locator(
+    '.relationship[data-element-id="e1"] > path:not(.relationship-hit-area)',
+  );
+  const originalPath = await routePath.getAttribute("d");
+  await page
+    .getByRole("application", { name: "Interactive Mermaid diagram" })
+    .evaluate((surface) => {
+      surface.setPointerCapture = () => undefined;
+    });
+  await segment.dispatchEvent("pointerdown", {
+    pointerId: 7,
+    pointerType: "touch",
+    isPrimary: true,
+    button: 0,
+    clientX: x,
+    clientY: y,
+  });
+  await segment.dispatchEvent("pointermove", {
+    pointerId: 7,
+    pointerType: "touch",
+    isPrimary: true,
+    button: 0,
+    clientX: x + 30,
+    clientY: y + 30,
+  });
+  await expect(routePath).not.toHaveAttribute("d", originalPath!);
+  await segment.dispatchEvent("pointerup", {
+    pointerId: 7,
+    pointerType: "touch",
+    isPrimary: true,
+    button: 0,
+    clientX: x + 30,
+    clientY: y + 30,
+  });
+  await view(page, "Source");
+  await expect(
+    page.getByRole("textbox", { name: "Diagram source" }),
+  ).toHaveValue(/route:[^]*waypoints:/u);
+  await view(page, "Canvas");
+  await page.locator(".route-waypoint-handle").first().tap();
+  await expect(
+    page.getByRole("button", { name: "Remove waypoint", exact: true }),
+  ).toBeVisible();
+});
+
 test("finger drag previews and commits one node move", async ({
   page,
   context,

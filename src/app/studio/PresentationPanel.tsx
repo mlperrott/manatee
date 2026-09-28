@@ -194,6 +194,19 @@ export function PresentationPanel(props: {
           </button>
         </fieldset>
         <Show when={edge()}>
+          <Show when={layoutRelationship()?.manualRoute}>
+            <button
+              type="button"
+              onClick={() =>
+                void props.execute({
+                  type: "reset-route",
+                  elementId: id()!,
+                })
+              }
+            >
+              Reset route
+            </button>
+          </Show>
           <details class="advanced-controls">
             <summary>Connection docking</summary>
             <fieldset

@@ -94,6 +94,29 @@
       },
       "additionalProperties": true
     },
+    "routePoint": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "connectionRoute": {
+      "type": "object",
+      "required": ["waypoints"],
+      "properties": {
+        "waypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/routePoint" },
+          "x-manatee-atomic": true
+        }
+      },
+      "additionalProperties": true,
+      "x-manatee-atomic": true
+    },
     "nodeNotation": {
       "oneOf": [
         {
@@ -193,7 +216,8 @@
         "style": { "$ref": "#/$defs/relationshipLineStyle" },
         "text": { "$ref": "#/$defs/textStyle" },
         "notation": { "$ref": "#/$defs/relationshipNotation" },
-        "docks": { "$ref": "#/$defs/connectionDocks" }
+        "docks": { "$ref": "#/$defs/connectionDocks" },
+        "route": { "$ref": "#/$defs/connectionRoute" }
       },
       "additionalProperties": true
     },
@@ -223,7 +247,8 @@
         "style": { "$ref": "#/$defs/relationshipLineStyle" },
         "text": { "$ref": "#/$defs/textStyle" },
         "notation": { "$ref": "#/$defs/relationshipNotation" },
-        "docks": { "$ref": "#/$defs/connectionDocks" }
+        "docks": { "$ref": "#/$defs/connectionDocks" },
+        "route": { "$ref": "#/$defs/connectionRoute" }
       },
       "additionalProperties": true
     },

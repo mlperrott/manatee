@@ -65,6 +65,8 @@ export interface LayoutRelationship {
   readonly notation: NotationChoice | undefined;
   readonly label: string;
   readonly points: readonly Point[];
+  readonly manualRoute: boolean;
+  readonly manualWaypoints: readonly Point[];
   readonly dockEditable: boolean;
   readonly sourceDock?: ConnectionDock | undefined;
   readonly targetDock?: ConnectionDock | undefined;

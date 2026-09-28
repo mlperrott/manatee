@@ -908,6 +908,22 @@ button:disabled {
   touch-action: none;
 }
 
+.mermaid-surface .route-segment-handle,
+.mermaid-surface .route-waypoint-handle,
+.mermaid-surface .route-segment-handle *,
+.mermaid-surface .route-waypoint-handle * {
+  cursor: move;
+  pointer-events: all;
+  touch-action: none;
+}
+
+.mermaid-surface .route-segment-handle:focus-visible > rect,
+.mermaid-surface .route-waypoint-handle:focus-visible > circle:last-child,
+.mermaid-surface .route-waypoint-handle.is-selected > circle:last-child {
+  stroke: #f97316;
+  stroke-width: 3;
+}
+
 .mermaid-surface .node-quick-add {
   cursor: crosshair;
   pointer-events: all;

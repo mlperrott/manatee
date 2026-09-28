@@ -377,6 +377,25 @@ export function renderMermaidSvg(
     options.interactive && selectedRelationship && selectedStart && selectedEnd
       ? `<g class="connection-endpoints" data-element-id="${escapeAttribute(selectedRelationship.id)}"><circle class="connection-endpoint-handle" data-endpoint="source" aria-label="Move source endpoint" cx="${selectedStart.x}" cy="${selectedStart.y}" r="8" fill="#ffffff" stroke="#2563eb" stroke-width="2" vector-effect="non-scaling-stroke"/><circle class="connection-endpoint-handle" data-endpoint="target" aria-label="Move target endpoint" cx="${selectedEnd.x}" cy="${selectedEnd.y}" r="8" fill="#ffffff" stroke="#2563eb" stroke-width="2" vector-effect="non-scaling-stroke"/></g>`
       : "";
+  const routeHandles =
+    options.interactive && selectedRelationship
+      ? `<g class="connection-route-handles" data-element-id="${escapeAttribute(selectedRelationship.id)}">${selectedRelationship.points
+          .slice(1)
+          .map((point, index) => {
+            const previous = selectedRelationship.points[index]!;
+            const x = (previous.x + point.x) / 2;
+            const y = (previous.y + point.y) / 2;
+            const half = 4 * interactionScale;
+            return `<g class="route-segment-handle" data-segment-index="${index}" role="button" tabindex="0" aria-label="Move route segment ${index + 1}"><circle class="route-handle-hit" cx="${x}" cy="${y}" r="${22 * interactionScale}"/><rect x="${x - half}" y="${y - half}" width="${half * 2}" height="${half * 2}" rx="${2 * interactionScale}"/></g>`;
+          })
+          .join("")}${selectedRelationship.points
+          .slice(1, -1)
+          .map(
+            (point, index) =>
+              `<g class="route-waypoint-handle" data-point-index="${index + 1}" role="button" tabindex="0" aria-label="Move route waypoint ${index + 1}"><circle class="route-handle-hit" cx="${point.x}" cy="${point.y}" r="${22 * interactionScale}"/><circle cx="${point.x}" cy="${point.y}" r="${6 * interactionScale}"/></g>`,
+          )
+          .join("")}</g>`
+      : "";
   const outdated = options.outdated
     ? `<g class="outdated"><rect x="12" y="12" width="142" height="30" rx="15"/><text x="83" y="32" text-anchor="middle">Preview out of date</text></g>`
     : "";
@@ -386,13 +405,24 @@ export function renderMermaidSvg(
   const selectedPath = options.interactive
     ? ".selected>path:not(.relationship-hit-area)"
     : ".selected>path";
+  const routePoints = scene.relationships.flatMap(({ points }) => points);
+  const routeMinX = Math.min(0, ...routePoints.map(({ x }) => x));
+  const routeMinY = Math.min(0, ...routePoints.map(({ y }) => y));
+  const routeMaxX = Math.max(
+    scene.width,
+    ...routePoints.map(({ x }) => x + 24),
+  );
+  const routeMaxY = Math.max(
+    scene.height,
+    ...routePoints.map(({ y }) => y + 24),
+  );
   const viewport = options.viewport ?? {
-    x: 0,
-    y: 0,
-    width: scene.width,
-    height: scene.height,
+    x: routeMinX < 0 ? routeMinX - 24 : 0,
+    y: routeMinY < 0 ? routeMinY - 24 : 0,
+    width: routeMaxX - (routeMinX < 0 ? routeMinX - 24 : 0),
+    height: routeMaxY - (routeMinY < 0 ? routeMinY - 24 : 0),
   };
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}" width="${viewport.width}" height="${viewport.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,${selectedPath}{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}.node-quick-add circle{fill:#fff;stroke:#2563eb;stroke-width:2;vector-effect:non-scaling-stroke}.node-quick-add path{fill:none;stroke:#2563eb;stroke-width:2;stroke-linecap:round;vector-effect:non-scaling-stroke}</style>${groups}${relationships}${nodes}${quickAddHandles}${endpointHandles}${outdated}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}" width="${viewport.width}" height="${viewport.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,${selectedPath}{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}.node-quick-add circle{fill:#fff;stroke:#2563eb;stroke-width:2;vector-effect:non-scaling-stroke}.node-quick-add path{fill:none;stroke:#2563eb;stroke-width:2;stroke-linecap:round;vector-effect:non-scaling-stroke}.route-handle-hit{fill:transparent;stroke:none}.route-segment-handle>rect{fill:#fff;stroke:#2563eb;stroke-width:1.5;vector-effect:non-scaling-stroke}.route-waypoint-handle>circle:last-child{fill:#2563eb;stroke:#fff;stroke-width:2;vector-effect:non-scaling-stroke}</style>${groups}${relationships}${nodes}${quickAddHandles}${routeHandles}${endpointHandles}${outdated}</svg>`;
 }
 
 export const renderMermaidPreviewSvg = renderMermaidSvg;

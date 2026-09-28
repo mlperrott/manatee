@@ -43,6 +43,14 @@ _Avoid_: Cardinal point, port
 **Automatic docking**: Connection routing in which Manatee chooses the connection dock for an endpoint.
 _Avoid_: Auto select
 
+**Route waypoint**: An author-chosen interior point that defines part of a connection's exact orthogonal path.
+_Avoid_: Control point, bend point
+
+**Manual route**: An exact connection path chosen by the author and saved as a presentation override. It remains authoritative even when later diagram changes cause it to cross another element.
+_Avoid_: Suggested route, preferred route
+
+**Reset route**: The editor action that clears one connection's manual route and returns it to automatic routing without clearing its dock locks.
+
 **Reconnect**: An authoring change that moves a connection endpoint to a different node, changing the semantic source.
 
 **Node attribute**: A named value associated with a node, such as its status, that can be used to determine its presentation.

@@ -6,4 +6,28 @@ Canvas creation is committed through a composite document command. A created nod
 
 Directional quick-add stages that complete transaction directly on the canvas. The proposed node and connection appear immediately with inline label editing; Enter or blur commits the transaction, while Escape removes the draft without adding history. A quick-added node inherits the source node's visible type and appearance so the frequent path does not require a separate type chooser.
 
-Direct controls adapt their gestures across pointer, touch and keyboard input, respect presentation-only mode, and create only semantic node-to-node connections. Resize, rotation, multi-selection, route waypoints, arbitrary lines and group connection targets remain outside this increment so Manatee does not become a general-purpose drawing-object editor.
+Direct controls adapt their gestures across pointer, touch and keyboard input, respect presentation-only mode, and create only semantic node-to-node connections. Resize, rotation, multi-selection, arbitrary lines and group connection targets remain outside this increment so Manatee does not become a general-purpose drawing-object editor.
+
+Issue #25 reverses the route-waypoint exclusion. Authors may set an exact manual route for every rendered connection, across all supported Mermaid families and endpoint kinds, using both waypoint and route-segment handles. A manual route remains authoritative even when it crosses another element; Manatee warns about the conflict rather than silently changing the author's path. This expands presentation authoring without turning route geometry into semantic source or allowing arbitrary unconnected lines.
+
+Manual routes store their interior waypoints in diagram coordinates. When both endpoints move together, the route translates with them; when only one endpoint moves, Manatee preserves the interior waypoints and repairs that endpoint's orthogonal leg. The same geometric rule applies when containment or layout changes move endpoint geometry, while unrelated obstacles do not alter the manual route.
+
+Route reconciliation follows connection identity. A connection with an authored ID retains its manual route across semantic edits. An explicit reconnect preserves the interior waypoints and repairs the changed endpoint leg. An endpoint-matched route migrates only through an unambiguous editor action; a raw source edit that changes its matcher leaves the old presentation override unmatched rather than guessing that a different connection is its continuation.
+
+Reset route removes only the selected connection's manual route and retains its dock locks. Reset layout remains the global return to automatic geometry and also clears every manual route alongside dock locks, manual positions and timer anchors. Each reset is one undoable command.
+
+Route waypoint and segment handles remain a fixed size on screen and use enlarged touch targets. They participate in keyboard focus order: arrow keys move a focused handle by 5 pixels, Shift+arrow by 20 pixels, and Delete removes a focused waypoint; keyboard movement of a segment handle can create the required bends. Interaction geometry is editor-only and never appears in SVG or PNG exports.
+
+Every rendered connection is route-editable once it has a stable identity. For an ambiguous parallel connection, the first route change follows the existing identity-repair path: when semantic source editing is allowed, Manatee adds an authored connection ID and the route in one undoable transaction. Presentation-only mode requires the author to enable source editing before that identity repair rather than silently changing semantic source or binding an override to connection order.
+
+Manual routes and dock locks are independent presentation controls. Waypoints govern interior geometry, while an unlocked endpoint remains automatically docked to the side that best reaches its first or last waypoint. Changing or reconciling a dock repairs only the adjacent endpoint leg and preserves the interior waypoints.
+
+Every route segment is directly editable. A segment moves perpendicular to itself; moving an endpoint-adjacent segment introduces the two bends needed to retain the endpoint. Moving a waypoint adjusts its adjacent segments so the route remains orthogonal.
+
+Because a manual route is authoritative, content does not push it aside. Manatee instead warns when it crosses a non-endpoint node shape or any visible node, group or connection label. Crossing a group boundary is valid and produces no warning, including connections that cross containment.
+
+Mermaid front matter stores a manual route as `route: { waypoints: [{ x, y }, ...] }` on the existing relationship presentation entry. Waypoints are finite signed diagram coordinates so an author may route above or to the left of the current diagram origin. On the first successful edit, Manatee captures the rendered route, applies the change and stores its normalized interior waypoints. Later commits remove duplicate and redundant collinear points but never optimize or otherwise alter the chosen path.
+
+Invalid route metadata follows the existing validated-projection policy: preserve the source verbatim, report a precise warning, ignore only the invalid route, and automatically route that connection while continuing to apply other valid presentation settings.
+
+Route handles appear only for the selected connection. Reset route is available from both the selection-local connection action bar and the connection's Inspector controls. Tapping a waypoint selects it and exposes a Remove waypoint action in the connection action bar; keyboard users remove the focused waypoint with Delete. Removing a waypoint normalizes and saves the remaining route as one undoable change.

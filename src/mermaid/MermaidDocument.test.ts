@@ -462,6 +462,14 @@ C[Third]
       endpoint: "target",
       dock: "left",
     });
+    await document.execute({
+      type: "set-route",
+      elementId: edge.id,
+      waypoints: [
+        { x: 120, y: 30 },
+        { x: 240, y: 30 },
+      ],
+    });
     expect(locked.snapshot.metadata).toMatchObject({
       elements: {
         relationships: {
@@ -481,7 +489,19 @@ C[Third]
     expect(reconnected.snapshot.source).toContain("A e1@--> C");
     expect(reconnected.snapshot.metadata).toMatchObject({
       elements: {
-        relationships: { byId: { e1: { docks: { source: "top" } } } },
+        relationships: {
+          byId: {
+            e1: {
+              docks: { source: "top" },
+              route: {
+                waypoints: [
+                  { x: 120, y: 30 },
+                  { x: 240, y: 30 },
+                ],
+              },
+            },
+          },
+        },
       },
     });
     expect(
@@ -505,7 +525,120 @@ C[Third]
     expect(redone.snapshot.source).toContain("A e1@--> C");
     const reset = await document.execute({ type: "reset-layout" });
     expect(JSON.stringify(reset.snapshot.metadata)).not.toContain('"docks"');
+    expect(JSON.stringify(reset.snapshot.metadata)).not.toContain('"route"');
     expect(reset.snapshot.commands.undo).toBe(true);
+    document.dispose();
+  });
+
+  it("persists and independently resets an exact manual connection route", async () => {
+    const document = new MermaidDocument();
+    const opened = await document.open(`flowchart LR
+A e1@--> B
+`);
+    const edge = opened.model!.relationships[0]!;
+    await document.execute({
+      type: "set-dock",
+      elementId: edge.id,
+      endpoint: "source",
+      dock: "top",
+    });
+    const routed = await document.execute({
+      type: "set-route",
+      elementId: edge.id,
+      waypoints: [
+        { x: 80, y: -20 },
+        { x: 240, y: -20 },
+      ],
+    });
+    expect(routed.snapshot.metadata).toMatchObject({
+      elements: {
+        relationships: {
+          byId: {
+            e1: {
+              docks: { source: "top" },
+              route: {
+                waypoints: [
+                  { x: 80, y: -20 },
+                  { x: 240, y: -20 },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(routed.snapshot.scene!.relationships[0]).toMatchObject({
+      manualRoute: true,
+      manualWaypoints: [
+        { x: 80, y: -20 },
+        { x: 240, y: -20 },
+      ],
+    });
+    const reset = await document.execute({
+      type: "reset-route",
+      elementId: edge.id,
+    });
+    expect(reset.snapshot.metadata).toMatchObject({
+      elements: {
+        relationships: { byId: { e1: { docks: { source: "top" } } } },
+      },
+    });
+    expect(JSON.stringify(reset.snapshot.metadata)).not.toContain('"route"');
+    expect(reset.snapshot.scene!.relationships[0]!.manualRoute).toBe(false);
+    const undone = await document.execute({ type: "undo" });
+    expect(undone.snapshot.scene!.relationships[0]!.manualRoute).toBe(true);
+    document.dispose();
+  });
+
+  it("translates a manual route with both endpoints and preserves it for one", async () => {
+    const document = new MermaidDocument();
+    await document.open(`---
+manatee:
+  version: 1
+  elements:
+    groups:
+      team:
+        position: { x: 40, y: 40 }
+    nodes:
+      A:
+        position: { x: 20, y: 30 }
+      B:
+        position: { x: 220, y: 30 }
+    relationships:
+      byId:
+        e1:
+          route:
+            waypoints:
+              - { x: 150, y: 90 }
+              - { x: 250, y: 90 }
+---
+flowchart LR
+subgraph team[Team]
+  A[First] e1@--> B[Second]
+end
+`);
+    const movedGroup = await document.execute({
+      type: "move",
+      elementId: "team",
+      dx: 30,
+      dy: 20,
+    });
+    expect(
+      movedGroup.snapshot.scene!.relationships[0]!.manualWaypoints,
+    ).toEqual([
+      { x: 180, y: 110 },
+      { x: 280, y: 110 },
+    ]);
+    const movedOne = await document.execute({
+      type: "move",
+      elementId: "A",
+      dx: 10,
+      dy: 5,
+    });
+    expect(movedOne.snapshot.scene!.relationships[0]!.manualWaypoints).toEqual([
+      { x: 180, y: 110 },
+      { x: 280, y: 110 },
+    ]);
     document.dispose();
   });
 

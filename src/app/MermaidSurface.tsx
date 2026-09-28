@@ -9,7 +9,7 @@ import type {
   ConnectionDock,
   ConnectionEndpoint,
 } from "../core/document/commands";
-import { route } from "../mermaid/layout/routing";
+import { normalizeRoutePoints, route } from "../mermaid/layout/routing";
 
 export interface MermaidSurfaceProps {
   readonly svg: string;
@@ -36,6 +36,11 @@ export interface MermaidSurfaceProps {
     endpoint: ConnectionEndpoint,
     nodeId: string,
   ) => void;
+  readonly onSetRoute: (
+    relationshipId: string,
+    waypoints: readonly Point[],
+  ) => void;
+  readonly onResetRoute: (relationshipId: string) => void;
   readonly placementMode: boolean;
   readonly onArmPlacement: () => void;
   readonly onCancelInteraction: () => void;
@@ -166,6 +171,14 @@ function diagramPoint(
 ): Point | undefined {
   const root = svgRoot(container);
   if (!root) return;
+  const matrix = root.getScreenCTM();
+  if (matrix) {
+    const point = root.createSVGPoint();
+    point.x = clientX;
+    point.y = clientY;
+    const transformed = point.matrixTransform(matrix.inverse());
+    return { x: transformed.x, y: transformed.y };
+  }
   const rect = root.getBoundingClientRect();
   const viewBox = root.viewBox.baseVal;
   if (rect.width <= 0 || rect.height <= 0) return;
@@ -777,6 +790,118 @@ function previewLooseEndpoint(
   }
 }
 
+function moveRouteSegment(
+  points: readonly Point[],
+  segmentIndex: number,
+  dx: number,
+  dy: number,
+): Point[] {
+  const a = points[segmentIndex];
+  const b = points[segmentIndex + 1];
+  if (!a || !b) return [...points];
+  const horizontal = a.y === b.y;
+  const amount = horizontal ? dy : dx;
+  if (amount === 0) return [...points];
+  const lastSegment = points.length - 2;
+  const shiftedA = horizontal
+    ? { x: a.x, y: a.y + amount }
+    : { x: a.x + amount, y: a.y };
+  const shiftedB = horizontal
+    ? { x: b.x, y: b.y + amount }
+    : { x: b.x + amount, y: b.y };
+  const prefix: Point[] = [];
+  if (segmentIndex === 0) {
+    const length = horizontal ? Math.abs(b.x - a.x) : Math.abs(b.y - a.y);
+    const stub = Math.min(12, Math.max(4, length / 3));
+    const direction = horizontal
+      ? Math.sign(b.x - a.x) || 1
+      : Math.sign(b.y - a.y) || 1;
+    const stubPoint = horizontal
+      ? { x: a.x + direction * stub, y: a.y }
+      : { x: a.x, y: a.y + direction * stub };
+    prefix.push(a, stubPoint, {
+      x: horizontal ? stubPoint.x : shiftedA.x,
+      y: horizontal ? shiftedA.y : stubPoint.y,
+    });
+  } else prefix.push(...points.slice(0, segmentIndex), shiftedA);
+
+  const suffix: Point[] = [];
+  if (segmentIndex === lastSegment) {
+    const length = horizontal ? Math.abs(b.x - a.x) : Math.abs(b.y - a.y);
+    const stub = Math.min(12, Math.max(4, length / 3));
+    const direction = horizontal
+      ? Math.sign(b.x - a.x) || 1
+      : Math.sign(b.y - a.y) || 1;
+    const stubPoint = horizontal
+      ? { x: b.x - direction * stub, y: b.y }
+      : { x: b.x, y: b.y - direction * stub };
+    suffix.push(
+      {
+        x: horizontal ? stubPoint.x : shiftedB.x,
+        y: horizontal ? shiftedB.y : stubPoint.y,
+      },
+      stubPoint,
+      b,
+    );
+  } else suffix.push(shiftedB, ...points.slice(segmentIndex + 2));
+  return normalizeRoutePoints([...prefix, ...suffix]);
+}
+
+function moveRouteWaypoint(
+  points: readonly Point[],
+  pointIndex: number,
+  dx: number,
+  dy: number,
+): Point[] {
+  const previous = points[pointIndex - 1];
+  const point = points[pointIndex];
+  const next = points[pointIndex + 1];
+  if (!previous || !point || !next) return [...points];
+  const incomingHorizontal = previous.y === point.y;
+  let adjusted = moveRouteSegment(
+    points,
+    pointIndex - 1,
+    incomingHorizontal ? 0 : dx,
+    incomingHorizontal ? dy : 0,
+  );
+  const intermediate = {
+    x: point.x + (incomingHorizontal ? 0 : dx),
+    y: point.y + (incomingHorizontal ? dy : 0),
+  };
+  const adjustedIndex = adjusted.findIndex(
+    (candidate, index) =>
+      index > 0 &&
+      index < adjusted.length - 1 &&
+      candidate.x === intermediate.x &&
+      candidate.y === intermediate.y,
+  );
+  if (adjustedIndex < 0) return adjusted;
+  const outgoingHorizontal = point.y === next.y;
+  adjusted = moveRouteSegment(
+    adjusted,
+    adjustedIndex,
+    outgoingHorizontal ? 0 : dx,
+    outgoingHorizontal ? dy : 0,
+  );
+  return adjusted;
+}
+
+function updateRoutePreview(
+  preview: RelationshipPreview,
+  points: readonly Point[],
+) {
+  const d = path(points);
+  for (const item of preview.paths) item.setAttribute("d", d);
+  if (preview.label) {
+    const before = midpoint(preview.relationship.points);
+    const after = midpoint(points);
+    preview.label.setAttribute(
+      "transform",
+      `translate(${after.x - before.x} ${after.y - before.y})`,
+    );
+  }
+}
+
 type SurfaceDrag =
   | {
       readonly kind: "element";
@@ -816,6 +941,20 @@ type SurfaceDrag =
       moved: boolean;
       point: Point | undefined;
       targetId: string | undefined;
+    }
+  | {
+      readonly kind: "route";
+      readonly relationshipId: string;
+      readonly handle: "segment" | "waypoint";
+      readonly index: number;
+      readonly pointerId: number;
+      readonly x: number;
+      readonly y: number;
+      readonly touch: boolean;
+      readonly preview: RelationshipPreview;
+      readonly originalPoints: readonly Point[];
+      moved: boolean;
+      points: readonly Point[];
     };
 
 export function MermaidSurface(props: MermaidSurfaceProps) {
@@ -832,6 +971,9 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
   const [announcement, setAnnouncement] = createSignal("");
   const [interactionActive, setInteractionActive] = createSignal(false);
   const [actionBarReady, setActionBarReady] = createSignal(false);
+  const [selectedWaypoint, setSelectedWaypoint] = createSignal<
+    { readonly relationshipId: string; readonly pointIndex: number } | undefined
+  >();
   let drag: SurfaceDrag | undefined;
 
   const selectAndAnnounce = (id: string | undefined) => {
@@ -853,9 +995,11 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     const previews =
       drag?.kind === "endpoint"
         ? [drag.preview]
-        : drag?.kind === "element"
-          ? drag.relationships
-          : [];
+        : drag?.kind === "route"
+          ? [drag.preview]
+          : drag?.kind === "element"
+            ? drag.relationships
+            : [];
     if (drag?.kind === "element")
       for (const group of drag.groups) group.removeAttribute("transform");
     for (const preview of previews) {
@@ -886,6 +1030,33 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     props.scene?.nodes.find(({ id }) => id === props.selectedElementId);
   const selectedRelationship = () =>
     props.scene?.relationships.find(({ id }) => id === props.selectedElementId);
+  const saveRoute = (relationshipId: string, points: readonly Point[]) => {
+    const normalized = normalizeRoutePoints(points);
+    const waypoints = normalized.slice(1, -1);
+    if (waypoints.length === 0) props.onResetRoute(relationshipId);
+    else props.onSetRoute(relationshipId, waypoints);
+  };
+  const removeWaypoint = (relationshipId: string, pointIndex: number) => {
+    const relationship = props.scene?.relationships.find(
+      ({ id }) => id === relationshipId,
+    );
+    const removed = relationship?.points[pointIndex];
+    const previous = relationship?.points[pointIndex - 1];
+    const next = relationship?.points[pointIndex + 1];
+    if (!relationship || !removed || !previous || !next) return;
+    const points = [...relationship.points];
+    points.splice(pointIndex, 1);
+    if (previous.x !== next.x && previous.y !== next.y) {
+      const first = { x: next.x, y: previous.y };
+      const replacement =
+        first.x === removed.x && first.y === removed.y
+          ? { x: previous.x, y: next.y }
+          : first;
+      points.splice(pointIndex, 0, replacement);
+    }
+    setSelectedWaypoint(undefined);
+    saveRoute(relationshipId, points);
+  };
   const nodeActionPlacement = (
     node: NonNullable<ReturnType<typeof selectedNode>>,
   ): "above" | "below" => {
@@ -927,7 +1098,12 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     }
     const relationship = selectedRelationship();
     if (!relationship) return undefined;
-    const point = midpoint(relationship.points);
+    const waypoint = selectedWaypoint();
+    const point =
+      waypoint?.relationshipId === relationship.id
+        ? (relationship.points[waypoint.pointIndex] ??
+          midpoint(relationship.points))
+        : midpoint(relationship.points);
     return {
       x: point.x,
       y: point.y - 20 / props.zoom,
@@ -942,7 +1118,16 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     const relationship = selectedRelationship();
     const selected = node ?? relationship;
     return anchor && selected
-      ? { anchor, selected, node, relationship }
+      ? {
+          anchor,
+          selected,
+          node,
+          relationship,
+          waypoint:
+            selectedWaypoint()?.relationshipId === relationship?.id
+              ? selectedWaypoint()
+              : undefined,
+        }
       : undefined;
   };
   const forwardDirection = (): CanvasDirection => {
@@ -963,6 +1148,17 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
       requestAnimationFrame(() =>
         requestAnimationFrame(() => setActionBarReady(true)),
       );
+    },
+  );
+
+  createEffect(
+    () => ({
+      selectedId: props.selectedElementId,
+      waypoint: selectedWaypoint(),
+    }),
+    ({ selectedId, waypoint }) => {
+      if (waypoint && waypoint.relationshipId !== selectedId)
+        setSelectedWaypoint(undefined);
     },
   );
 
@@ -1044,6 +1240,70 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           event.target instanceof HTMLTextAreaElement
         )
           return;
+        const routeHandle =
+          event.target instanceof Element
+            ? event.target.closest<SVGGElement>(
+                ".route-segment-handle,.route-waypoint-handle",
+              )
+            : null;
+        const routeGroup = routeHandle?.closest<SVGGElement>(
+          ".connection-route-handles",
+        );
+        const routeRelationship = props.scene?.relationships.find(
+          ({ id }) => id === routeGroup?.dataset.elementId,
+        );
+        if (routeHandle && routeRelationship) {
+          const pointIndex = Number(routeHandle.dataset.pointIndex);
+          if (
+            routeHandle.classList.contains("route-waypoint-handle") &&
+            Number.isInteger(pointIndex)
+          )
+            setSelectedWaypoint({
+              relationshipId: routeRelationship.id,
+              pointIndex,
+            });
+          const direction = {
+            ArrowLeft: [-1, 0],
+            ArrowRight: [1, 0],
+            ArrowUp: [0, -1],
+            ArrowDown: [0, 1],
+          }[event.key];
+          if (direction) {
+            const amount = event.shiftKey ? 20 : 5;
+            const dx = direction[0]! * amount;
+            const dy = direction[1]! * amount;
+            const segmentIndex = Number(routeHandle.dataset.segmentIndex);
+            const points = routeHandle.classList.contains(
+              "route-segment-handle",
+            )
+              ? moveRouteSegment(routeRelationship.points, segmentIndex, dx, dy)
+              : moveRouteWaypoint(routeRelationship.points, pointIndex, dx, dy);
+            const changed =
+              points.length !== routeRelationship.points.length ||
+              points.some(
+                (point, index) =>
+                  point.x !== routeRelationship.points[index]?.x ||
+                  point.y !== routeRelationship.points[index]?.y,
+              );
+            if (changed) {
+              event.preventDefault();
+              saveRoute(routeRelationship.id, points);
+              setAnnouncement(
+                `${routeHandle.classList.contains("route-segment-handle") ? "Route segment" : "Route waypoint"} moved.`,
+              );
+            } else event.preventDefault();
+            return;
+          }
+          if (
+            event.key === "Delete" &&
+            routeHandle.classList.contains("route-waypoint-handle")
+          ) {
+            event.preventDefault();
+            removeWaypoint(routeRelationship.id, pointIndex);
+            setAnnouncement("Route waypoint removed.");
+            return;
+          }
+        }
         if (event.key === "Escape") {
           event.preventDefault();
           clearDrag();
@@ -1146,6 +1406,80 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         }
         if (props.disabled || event.button !== 0) return;
         clearDrag();
+        const routeGroup =
+          event.target instanceof Element
+            ? event.target.closest<SVGGElement>(".connection-route-handles")
+            : null;
+        const routeRelationship = props.scene?.relationships.find(
+          ({ id }) => id === routeGroup?.dataset.elementId,
+        );
+        const routePoint = routeGroup
+          ? diagramPoint(container, event.clientX, event.clientY)
+          : undefined;
+        if (routePoint && routeRelationship && props.scene) {
+          const nearest = [
+            ...routeRelationship.points.slice(1).map((point, index) => {
+              const previous = routeRelationship.points[index]!;
+              return {
+                handle: "segment" as const,
+                index,
+                distance: Math.hypot(
+                  routePoint.x - (previous.x + point.x) / 2,
+                  routePoint.y - (previous.y + point.y) / 2,
+                ),
+              };
+            }),
+            ...routeRelationship.points.slice(1, -1).map((point, index) => ({
+              handle: "waypoint" as const,
+              index: index + 1,
+              distance: Math.hypot(
+                routePoint.x - point.x,
+                routePoint.y - point.y,
+              ),
+            })),
+          ].sort((left, right) => left.distance - right.distance)[0];
+          const handle = nearest?.handle;
+          const index = nearest?.index;
+          const preview = relationshipPreviews(
+            props.scene,
+            container,
+            new Set([routeRelationship.source]),
+          ).find(
+            (candidate) => candidate.relationship.id === routeRelationship.id,
+          );
+          if (
+            nearest &&
+            preview &&
+            handle &&
+            index !== undefined &&
+            nearest.distance * props.zoom <= 22
+          ) {
+            if (handle === "waypoint")
+              setSelectedWaypoint({
+                relationshipId: routeRelationship.id,
+                pointIndex: index,
+              });
+            else setSelectedWaypoint(undefined);
+            drag = {
+              kind: "route",
+              relationshipId: routeRelationship.id,
+              handle,
+              index,
+              pointerId: event.pointerId,
+              x: event.clientX,
+              y: event.clientY,
+              touch: event.pointerType === "touch",
+              preview,
+              originalPoints: routeRelationship.points,
+              moved: false,
+              points: routeRelationship.points,
+            };
+            setInteractionActive(true);
+            event.currentTarget.setPointerCapture(event.pointerId);
+            event.preventDefault();
+            return;
+          }
+        }
         const quickHandle =
           event.target instanceof Element
             ? event.target.closest<SVGGElement>(".node-quick-add")
@@ -1281,6 +1615,16 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         )
           return;
         drag.moved = true;
+        if (drag.kind === "route") {
+          const dx = screenDx / props.zoom;
+          const dy = screenDy / props.zoom;
+          drag.points =
+            drag.handle === "segment"
+              ? moveRouteSegment(drag.originalPoints, drag.index, dx, dy)
+              : moveRouteWaypoint(drag.originalPoints, drag.index, dx, dy);
+          updateRoutePreview(drag.preview, drag.points);
+          return;
+        }
         if (drag.kind === "connection-create") {
           const point = diagramPoint(container, event.clientX, event.clientY);
           if (!point) return;
@@ -1377,6 +1721,14 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         clearDrag();
         if (event.currentTarget.hasPointerCapture(event.pointerId))
           event.currentTarget.releasePointerCapture(event.pointerId);
+        if (completed.kind === "route") {
+          selectAndAnnounce(completed.relationshipId);
+          if (!moved) return;
+          setSelectedWaypoint(undefined);
+          saveRoute(completed.relationshipId, completed.points);
+          setAnnouncement("Manual route saved.");
+          return;
+        }
         if (completed.kind === "endpoint") {
           selectAndAnnounce(completed.relationshipId);
           if (!moved || !completed.target) return;
@@ -1417,6 +1769,13 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           props.onNudge(completed.id, completed.dx, completed.dy);
       }}
       onDblClick={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest(
+            ".route-segment-handle,.route-waypoint-handle,.connection-endpoint-handle",
+          )
+        )
+          return;
         const id = elementId(event.target);
         if (!id) return;
         event.preventDefault();
@@ -1576,24 +1935,52 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
                 </button>
               </Show>
               <Show when={state().relationship}>
-                <label>
-                  <span class="visually-hidden">Connection kind</span>
-                  <select
-                    aria-label="Canvas connection kind"
-                    disabled={!props.sourceEditing}
-                    value={state().relationship?.kind}
-                    onChange={(event) =>
-                      props.onChangeKind(
-                        state().selected.id,
-                        event.currentTarget.value,
-                      )
-                    }
-                  >
-                    {props.connectionKinds.map((kind) => (
-                      <option value={kind.value}>{kind.label}</option>
-                    ))}
-                  </select>
-                </label>
+                <>
+                  <label>
+                    <span class="visually-hidden">Connection kind</span>
+                    <select
+                      aria-label="Canvas connection kind"
+                      disabled={!props.sourceEditing}
+                      value={state().relationship?.kind}
+                      onChange={(event) =>
+                        props.onChangeKind(
+                          state().selected.id,
+                          event.currentTarget.value,
+                        )
+                      }
+                    >
+                      {props.connectionKinds.map((kind) => (
+                        <option value={kind.value}>{kind.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <Show when={state().relationship?.manualRoute}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedWaypoint(undefined);
+                        props.onResetRoute(state().selected.id);
+                      }}
+                    >
+                      Reset route
+                    </button>
+                  </Show>
+                  <Show when={state().waypoint}>
+                    {(waypoint) => (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeWaypoint(
+                            waypoint().relationshipId,
+                            waypoint().pointIndex,
+                          )
+                        }
+                      >
+                        Remove waypoint
+                      </button>
+                    )}
+                  </Show>
+                </>
               </Show>
               <button
                 type="button"
@@ -1613,7 +2000,8 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
       </div>
       <p class="mermaid-surface__keyboard-help" id="diagram-keyboard-help">
         Arrow keys select. Alt or Option + arrow moves. N adds a node. Control
-        or Command + Enter quick-adds. Enter edits. Delete removes. Escape
+        or Command + Enter quick-adds. Focus a route handle and use arrows to
+        move it; hold Shift for 20 pixels. Enter edits. Delete removes. Escape
         cancels.
       </p>
       <span class="visually-hidden" role="status" aria-live="polite">

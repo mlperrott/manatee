@@ -27,6 +27,7 @@ import type {
 } from "./types";
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
+ajv.addKeyword({ keyword: "x-manatee-atomic", schemaType: "boolean" });
 const validate = ajv.compile(schema) as ValidateFunction;
 const INVALID = Symbol("invalid metadata value");
 
@@ -183,12 +184,14 @@ function projectKnown(
       Array.isArray(node.required) ? (node.required as string[]) : [],
     );
     const projected: UnknownRecord = {};
+    let invalidKnownChild = false;
 
     for (const [key, child] of Object.entries(value)) {
       const propertySchema = properties[key];
       if (propertySchema) {
         const result = projectKnown(child, propertySchema);
         if (result !== INVALID) projected[key] = result;
+        else invalidKnownChild = true;
         continue;
       }
 
@@ -205,6 +208,8 @@ function projectKnown(
       }
     }
 
+    if (node["x-manatee-atomic"] === true && invalidKnownChild) return INVALID;
+
     for (const key of required) {
       if (!(key in projected)) return INVALID;
     }
@@ -219,9 +224,15 @@ function projectKnown(
 
   if (node.type === "array") {
     if (!Array.isArray(value)) return INVALID;
-    const projected = value
-      .map((item) => projectKnown(item, node.items as SchemaNode))
-      .filter((item) => item !== INVALID);
+    const candidates = value.map((item) =>
+      projectKnown(item, node.items as SchemaNode),
+    );
+    if (
+      node["x-manatee-atomic"] === true &&
+      candidates.some((item) => item === INVALID)
+    )
+      return INVALID;
+    const projected = candidates.filter((item) => item !== INVALID);
     if (typeof node.minItems === "number" && projected.length < node.minItems) {
       return INVALID;
     }

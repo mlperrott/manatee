@@ -10,6 +10,8 @@ export const presentationCommandTypes = [
   "create-styling-rule",
   "set-spacing",
   "set-dock",
+  "set-route",
+  "reset-route",
   "use-automatic-position",
   "reset-layout",
   "cleanup-unmatched",
