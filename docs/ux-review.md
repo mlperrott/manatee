@@ -1,3 +1,18 @@
+# Direct-authoring UX remediation — 28 September 2026
+
+This follow-up compared the published editor with Miro, FigJam, Excalidraw and Whimsical, then corrected the highest-impact gaps without expanding Manatee into a general-purpose whiteboard.
+
+| Review concern | Correction |
+| --- | --- |
+| Directional quick-add required a detached form and a separate **Create node** action. | The proposed node and connection now appear immediately with label editing inside the node. Enter or blur commits one undoable command; Escape cancels without history. Type and appearance inherit from the source node. |
+| **Fit** used the entire scene rectangle, including unused layout space, and the keyboard reminder displaced the drawing. | The interactive preview uses padded content bounds, keeps the drawing centred, and recomputes Fit when panels or the viewport resize. The keyboard reminder is an overlay on desktop and is not shown in the mobile canvas. |
+| Selection actions could cover a connected line on desktop. | The action bar chooses the less occupied vertical side of a selected node and the interactive viewport reserves enough surrounding space for it. |
+| The mobile selection toolbar overflowed and obscured diagram content. | Mobile selection actions are docked above the workspace navigation, shape/type stays in the Inspector, Fit reserves the action area, and the toolbar is deferred until the selecting pointer gesture has completed. |
+
+The established boundary in ADR-0003 remains in force. Insert-on-connection, route waypoints, multi-selection, selected-subgraph layout and sharing/review are tracked separately rather than being folded into this remediation.
+
+---
+
 # Studio architecture and UX follow-up — 14 September 2026
 
 This review follows the single Mermaid document direction in ADR-0002. The architecture remains `DocumentSession → MermaidDocument → scene → SVG`; the corrections below keep source preservation, ordered document operations, browser storage, and one rendering path.

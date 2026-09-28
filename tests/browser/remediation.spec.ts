@@ -31,14 +31,14 @@ test("guides a first flowchart through two labelled nodes and a connection", asy
   await canvas.click({ position: { x: 120, y: 120 } });
   await expect(page.getByLabel("Node label")).toBeFocused();
   await page.getByLabel("Node label").fill("Start here");
-  await page.getByRole("button", { name: "Create node" }).click();
+  await page.getByLabel("Node label").press("Enter");
   await expect(page.locator('[data-element-id="start_here"]')).toContainText(
     "Start here",
   );
 
   await page.getByRole("button", { name: "Add another node" }).click();
   await page.getByLabel("Node label").fill("Finish");
-  await page.getByRole("button", { name: "Create node" }).click();
+  await page.getByLabel("Node label").press("Enter");
 
   await expect(page.locator(".relationship[data-element-id]")).toHaveCount(1);
   await expect(
@@ -66,8 +66,18 @@ test("quick-adds and directly connects nodes with one-step undo", async ({
     force: true,
   });
   await expect(page.locator(".canvas-node-draft-preview")).toBeVisible();
+  await expect(page.locator(".canvas-node-draft-editor")).toBeVisible();
+  await expect(page.getByLabel("New node type")).toHaveCount(0);
+  await page.getByLabel("Node label").fill("Cancelled node");
+  await page.getByLabel("Node label").press("Escape");
+  await expect(page.locator(".canvas-node-draft-preview")).toHaveCount(0);
+  await expect(source).toHaveValue(original);
+
+  await page.locator('.node-quick-add[data-direction="right"]').click({
+    force: true,
+  });
   await page.getByLabel("Node label").fill("Review request");
-  await page.getByRole("button", { name: "Create node" }).click();
+  await page.getByLabel("Node label").press("Enter");
   await expect(
     page.locator('[data-element-id="review_request"]'),
   ).toContainText("Review request");
@@ -105,6 +115,35 @@ test("quick-adds and directly connects nodes with one-step undo", async ({
   await page.mouse.up();
   await expect(page.locator(".relationship[data-element-id]")).toHaveCount(1);
   await expect(source).toHaveValue(/A connection_a_b@--> B/u);
+});
+
+test("centres fitted content and keeps it centred when panels resize the canvas", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page
+    .getByRole("button", { name: "Examples", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Open Simple BPMN" }).click();
+  await page.getByRole("button", { name: "Fit diagram to screen" }).click();
+
+  const centred = async () => {
+    const canvas = await page
+      .getByRole("application", { name: "Interactive Mermaid diagram" })
+      .boundingBox();
+    const drawing = await page
+      .locator(".mermaid-surface__drawing")
+      .boundingBox();
+    if (!canvas || !drawing) return Number.POSITIVE_INFINITY;
+    return Math.abs(
+      canvas.x + canvas.width / 2 - (drawing.x + drawing.width / 2),
+    );
+  };
+
+  await expect.poll(centred).toBeLessThan(2);
+  await page.getByRole("button", { name: "Show source" }).click();
+  await expect.poll(centred).toBeLessThan(2);
 });
 
 test("gates direct canvas authoring for presentation-only imports", async ({

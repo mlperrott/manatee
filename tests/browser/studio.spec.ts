@@ -68,7 +68,7 @@ test("opens teaching examples beside edited work and restores the workspace", as
     .getByRole("application", { name: "Interactive Mermaid diagram" })
     .click({ position: { x: 120, y: 120 } });
   await page.getByLabel("Node label").fill("My first node");
-  await page.getByRole("button", { name: "Create node" }).click();
+  await page.getByLabel("Node label").press("Enter");
   await page
     .getByRole("button", { name: "Examples", exact: true })
     .first()

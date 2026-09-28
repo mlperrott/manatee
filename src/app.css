@@ -782,12 +782,12 @@ button:disabled {
 }
 
 .mermaid-surface__keyboard-help {
-  position: sticky;
+  position: absolute;
+  z-index: 3;
   right: 10px;
   bottom: 10px;
-  align-self: flex-end;
   max-width: 300px;
-  margin: 10px;
+  margin: 0;
   padding: 7px 9px;
   color: #42545e;
   background: rgb(255 255 255 / 92%);
@@ -811,6 +811,7 @@ button:disabled {
 .mermaid-surface__drawing {
   position: relative;
   flex-shrink: 0;
+  box-sizing: border-box;
   margin: auto;
   padding: 16px;
 }
@@ -849,6 +850,29 @@ button:disabled {
   fill: #1e3a8a;
   font-size: 12px;
   font-weight: 700;
+}
+
+.canvas-node-draft-editor {
+  position: absolute;
+  z-index: 4;
+  transform: translate(-50%, -50%);
+}
+
+.canvas-node-draft-editor input {
+  width: 100%;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  color: var(--ink);
+  background: rgb(255 255 255 / 97%);
+  border: 2px solid #2563eb;
+  border-radius: 7px;
+  outline: 0;
+  text-align: center;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  box-shadow: 0 5px 18px rgb(37 99 235 / 18%);
 }
 
 .mermaid-surface svg {
@@ -929,6 +953,10 @@ button:disabled {
   box-shadow: 0 8px 24px rgb(38 53 61 / 16%);
   transform: translate(-50%, -100%);
   pointer-events: none;
+}
+
+.canvas-action-bar[data-placement="below"] {
+  transform: translate(-50%, 0);
 }
 
 .canvas-action-bar button,
@@ -1354,7 +1382,7 @@ button:disabled {
   .topbar__actions {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
     gap: 8px;
   }
   .file-input {
@@ -1429,6 +1457,30 @@ button:disabled {
   }
   .workspace > .inspector {
     display: block;
+  }
+  .mermaid-surface__keyboard-help {
+    display: none;
+  }
+  .canvas-action-bar {
+    position: fixed;
+    z-index: 8;
+    top: auto !important;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    left: max(12px, env(safe-area-inset-left)) !important;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: auto;
+    max-width: none;
+    transform: none !important;
+  }
+  .canvas-action-bar label {
+    display: none;
+  }
+  .canvas-action-bar button {
+    min-height: 48px;
+    padding: 0 8px;
+    font-size: 12px;
   }
   .source-panel textarea,
   .inspector input[type="text"],

@@ -18,6 +18,7 @@ import {
 import { canHostBoundaryTimer } from "./mermaid/notation";
 import { initialEditorUiState, sourceToggleLabel } from "./app/editorUiState";
 import { MermaidSurface, type CanvasDirection } from "./app/MermaidSurface";
+import { canvasViewport } from "./app/canvasViewport";
 import { StatusNotice } from "./app/StatusNotice";
 import type {
   DocumentCommand,
@@ -230,10 +231,6 @@ function Studio() {
   let sourceEditor: HTMLTextAreaElement | undefined;
   // oxlint-disable-next-line no-unassigned-vars
   let inlineLabelInput: HTMLInputElement | undefined;
-  // oxlint-disable-next-line no-unassigned-vars
-  let canvasDraftInput: HTMLInputElement | undefined;
-  // oxlint-disable-next-line no-unassigned-vars
-  let canvasDraftForm: HTMLFormElement | undefined;
   let canvasDraftCommitting = false;
   const fileHandles = new Map<string, FileSystemFileHandle>();
   const viewStates = new Map<string, { zoom: number; fit: boolean }>();
@@ -310,7 +307,8 @@ function Studio() {
     const current = snapshot();
     const currentScene = current?.scene;
     const family = current?.model?.family;
-    return currentScene
+    const viewport = currentScene ? canvasViewport(currentScene) : undefined;
+    return currentScene && viewport
       ? renderMermaidSvg(currentScene, {
           ...(current.selectedElementId
             ? { selectedElementId: current.selectedElementId }
@@ -320,8 +318,13 @@ function Studio() {
           interactive: true,
           quickAdd: family === "flowchart" || family === "swimlane",
           interactionScale: 1 / zoom(),
+          viewport,
         })
       : "";
+  });
+  const canvasBounds = createMemo(() => {
+    const scene = snapshot()?.scene;
+    return scene ? canvasViewport(scene) : undefined;
   });
 
   const fail = (error: unknown) => documentSession.reportError(error);
@@ -554,10 +557,6 @@ function Studio() {
       ...(parentId ? { parentId } : {}),
       ...(sourceId ? { sourceId, copyAppearanceFromId: sourceId } : {}),
       ...(notation ? { notation } : {}),
-    });
-    requestAnimationFrame(() => {
-      canvasDraftInput?.focus();
-      canvasDraftInput?.select();
     });
   };
   const beginQuickAdd = (
@@ -1729,8 +1728,9 @@ function Studio() {
               <MermaidSurface
                 svg={svg()}
                 scene={snapshot()?.scene}
-                width={snapshot()?.scene?.width ?? 1}
-                height={snapshot()?.scene?.height ?? 1}
+                viewport={canvasBounds() ?? { x: 0, y: 0, width: 1, height: 1 }}
+                width={canvasBounds()?.width ?? 1}
+                height={canvasBounds()?.height ?? 1}
                 zoom={zoom()}
                 fitView={fitView()}
                 onZoom={updateZoom}
@@ -1810,6 +1810,15 @@ function Studio() {
                       }
                     : undefined
                 }
+                onChangeDraftLabel={(value) => {
+                  const draft = canvasDraft();
+                  if (draft) setCanvasDraft({ ...draft, value });
+                }}
+                onCommitDraft={() => void commitCanvasDraft()}
+                onCancelDraft={() => {
+                  setCanvasDraft(undefined);
+                  setPlacementMode(false);
+                }}
               />
               <Show when={emptyFlowchart() && !placementMode()}>
                 <div class="canvas-empty" aria-labelledby="empty-canvas-title">
@@ -1848,66 +1857,6 @@ function Studio() {
                     </button>
                   </div>
                 </div>
-              </Show>
-              <Show when={canvasDraft()}>
-                {(draft) => (
-                  <form
-                    ref={canvasDraftForm}
-                    class="inline-label-editor canvas-node-draft"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void commitCanvasDraft();
-                    }}
-                  >
-                    <label>
-                      Node label
-                      <input
-                        ref={canvasDraftInput}
-                        value={draft().value}
-                        onInput={(event) =>
-                          setCanvasDraft({
-                            ...draft(),
-                            value: event.currentTarget.value,
-                          })
-                        }
-                        onBlur={() => {
-                          window.setTimeout(() => {
-                            if (
-                              canvasDraftForm &&
-                              !canvasDraftForm.contains(document.activeElement)
-                            )
-                              void commitCanvasDraft();
-                          }, 0);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape") {
-                            event.preventDefault();
-                            setCanvasDraft(undefined);
-                            setPlacementMode(false);
-                          }
-                        }}
-                      />
-                    </label>
-                    <label>
-                      Type
-                      <select
-                        aria-label="New node type"
-                        value={draft().kind}
-                        onChange={(event) =>
-                          setCanvasDraft({
-                            ...draft(),
-                            kind: event.currentTarget.value,
-                          })
-                        }
-                      >
-                        {canvasNodeKinds.map((kind) => (
-                          <option value={kind.value}>{kind.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <button type="submit">Create node</button>
-                  </form>
-                )}
               </Show>
               <Show when={inlineLabel()} keyed>
                 {(draft) => (

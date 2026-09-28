@@ -150,6 +150,32 @@ test("keeps source reachable in a short viewport and preserves it across rotatio
   await noPageOverflow(page);
 });
 
+test("keeps selected-node actions inside the mobile canvas", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await view(page, "Source");
+  await page
+    .getByRole("textbox", { name: "Diagram source" })
+    .fill("flowchart TD\n  start[Start] --> review[Review]\n");
+  await view(page, "Canvas");
+  await page.getByRole("button", { name: "Fit diagram to screen" }).tap();
+  await page.locator('[data-element-id="review"]').tap();
+
+  const actions = page.getByRole("toolbar", { name: "Actions for Review" });
+  await expect(actions).toBeVisible();
+  await expect(actions.getByLabel("Canvas node type")).not.toBeVisible();
+  await expect(
+    page.locator(".mermaid-surface__keyboard-help"),
+  ).not.toBeVisible();
+  const box = (await actions.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+  await noPageOverflow(page);
+});
+
 test("opens portable files and reaches process notation and export", async ({
   page,
 }) => {
@@ -402,7 +428,7 @@ test("explores examples and visually authors a diagram on a phone", async ({
     .getByRole("application", { name: "Interactive Mermaid diagram" })
     .tap({ position: { x: 100, y: 140 } });
   await page.getByLabel("Node label").fill("Keep this document");
-  await page.getByRole("button", { name: "Create node" }).tap();
+  await page.getByLabel("Node label").press("Enter");
   await page
     .getByRole("button", { name: "Examples", exact: true })
     .first()

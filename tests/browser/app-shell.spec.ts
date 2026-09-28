@@ -287,11 +287,6 @@ test("exports scaled PNG and falls back to download when clipboard fails", async
 }) => {
   await page.goto("./");
   await openAdvancedProcess(page);
-  const viewBox = (await page
-    .locator("svg[data-manatee-renderer]")
-    .getAttribute("viewBox"))!
-    .split(/\s+/u)
-    .map(Number);
   await page.getByText("Export", { exact: true }).click();
   await page.getByLabel("PNG scale").selectOption("3");
   const svgPromise = page.waitForEvent("download");
@@ -302,6 +297,10 @@ test("exports scaled PNG and falls back to download when clipboard fails", async
   const exportedSvg = await readFile(svgPath!, "utf8");
   expect(exportedSvg).toContain('data-manatee-renderer="mermaid"');
   expect(exportedSvg).toContain("<style>");
+  const exportViewBox = /viewBox="[^"]*\s([\d.]+)\s([\d.]+)"/u.exec(
+    exportedSvg,
+  );
+  expect(exportViewBox).not.toBeNull();
 
   const pngPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download PNG" }).click();
@@ -310,8 +309,12 @@ test("exports scaled PNG and falls back to download when clipboard fails", async
   const pngPath = await png.path();
   const bytes = await readFile(pngPath!);
   expect(bytes.subarray(1, 4).toString()).toBe("PNG");
-  expect(bytes.readUInt32BE(16)).toBe(Math.round(viewBox[2]! * 3));
-  expect(bytes.readUInt32BE(20)).toBe(Math.round(viewBox[3]! * 3));
+  expect(bytes.readUInt32BE(16)).toBe(
+    Math.round(Number(exportViewBox![1]) * 3),
+  );
+  expect(bytes.readUInt32BE(20)).toBe(
+    Math.round(Number(exportViewBox![2]) * 3),
+  );
   const whitePixel = await page.evaluate(async (base64) => {
     const image = new Image();
     image.src = `data:image/png;base64,${base64}`;

@@ -1,6 +1,7 @@
 import { hasExternalLabel, nodeLabelBounds } from "../layout/labels";
 import { PROCESS_CONTAINER_HEADER } from "../layout/geometry";
 import type {
+  Bounds,
   ComputedNodeStyle,
   LayoutNode,
   MermaidScene,
@@ -14,6 +15,7 @@ export interface MermaidSvgOptions {
   readonly interactive?: boolean;
   readonly quickAdd?: boolean;
   readonly interactionScale?: number;
+  readonly viewport?: Bounds;
 }
 
 function escapeText(value: string): string {
@@ -384,7 +386,13 @@ export function renderMermaidSvg(
   const selectedPath = options.interactive
     ? ".selected>path:not(.relationship-hit-area)"
     : ".selected>path";
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.width} ${scene.height}" width="${scene.width}" height="${scene.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,${selectedPath}{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}.node-quick-add circle{fill:#fff;stroke:#2563eb;stroke-width:2;vector-effect:non-scaling-stroke}.node-quick-add path{fill:none;stroke:#2563eb;stroke-width:2;stroke-linecap:round;vector-effect:non-scaling-stroke}</style>${groups}${relationships}${nodes}${quickAddHandles}${endpointHandles}${outdated}</svg>`;
+  const viewport = options.viewport ?? {
+    x: 0,
+    y: 0,
+    width: scene.width,
+    height: scene.height,
+  };
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}" width="${viewport.width}" height="${viewport.height}" role="img" data-manatee-renderer="mermaid"${options.outdated ? ' data-outdated="true"' : ""}>${title}<style>text{font-family:Inter,ui-sans-serif,system-ui,sans-serif}.selected>rect,.selected>circle,.selected>ellipse,.selected>polygon,${selectedPath}{filter:drop-shadow(0 0 3px #2563eb);stroke:#2563eb!important}.outdated rect{fill:#fff7ed;stroke:#f97316}.outdated text{font-size:12px;fill:#9a3412}.node-quick-add circle{fill:#fff;stroke:#2563eb;stroke-width:2;vector-effect:non-scaling-stroke}.node-quick-add path{fill:none;stroke:#2563eb;stroke-width:2;stroke-linecap:round;vector-effect:non-scaling-stroke}</style>${groups}${relationships}${nodes}${quickAddHandles}${endpointHandles}${outdated}</svg>`;
 }
 
 export const renderMermaidPreviewSvg = renderMermaidSvg;

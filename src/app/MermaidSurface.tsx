@@ -14,6 +14,7 @@ import { route } from "../mermaid/layout/routing";
 export interface MermaidSurfaceProps {
   readonly svg: string;
   readonly scene: MermaidScene | undefined;
+  readonly viewport: Bounds;
   readonly width: number;
   readonly height: number;
   readonly zoom: number;
@@ -66,6 +67,9 @@ export interface MermaidSurfaceProps {
         readonly sourceId?: string;
       }
     | undefined;
+  readonly onChangeDraftLabel: (value: string) => void;
+  readonly onCommitDraft: () => void;
+  readonly onCancelDraft: () => void;
 }
 
 export type CanvasDirection = "top" | "right" | "bottom" | "left";
@@ -818,9 +822,16 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
   // Assigned by Solid's bare-ref transform from ref={container}.
   // oxlint-disable-next-line no-unassigned-vars
   let container: HTMLDivElement | undefined;
+  // Assigned by Solid's bare-ref transform from the staged draft form.
+  // oxlint-disable-next-line no-unassigned-vars
+  let draftForm: HTMLFormElement | undefined;
+  // oxlint-disable-next-line no-unassigned-vars
+  let draftInput: HTMLInputElement | undefined;
+  let focusedDraftKey = "";
   const [size, setSize] = createSignal({ width: 0, height: 0 });
   const [announcement, setAnnouncement] = createSignal("");
   const [interactionActive, setInteractionActive] = createSignal(false);
+  const [actionBarReady, setActionBarReady] = createSignal(false);
   let drag: SurfaceDrag | undefined;
 
   const selectAndAnnounce = (id: string | undefined) => {
@@ -875,20 +886,57 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     props.scene?.nodes.find(({ id }) => id === props.selectedElementId);
   const selectedRelationship = () =>
     props.scene?.relationships.find(({ id }) => id === props.selectedElementId);
+  const nodeActionPlacement = (
+    node: NonNullable<ReturnType<typeof selectedNode>>,
+  ): "above" | "below" => {
+    let above = 0;
+    let below = 0;
+    const centreY = node.y + node.height / 2;
+    for (const relationship of props.scene?.relationships ?? []) {
+      const adjacent =
+        relationship.source === node.id
+          ? relationship.points[1]
+          : relationship.target === node.id
+            ? relationship.points.at(-2)
+            : undefined;
+      if (!adjacent) continue;
+      if (adjacent.y < centreY) above += 1;
+      else below += 1;
+    }
+    const roomAbove = (node.y - props.viewport.y) * props.zoom >= 72;
+    const roomBelow =
+      (props.viewport.y + props.viewport.height - node.y - node.height) *
+        props.zoom >=
+      72;
+    if (!roomAbove && roomBelow) return "below";
+    if (!roomBelow && roomAbove) return "above";
+    return above > below ? "below" : "above";
+  };
   const actionAnchor = () => {
     const node = selectedNode();
-    if (node)
+    if (node) {
+      const placement = nodeActionPlacement(node);
       return {
         x: node.x + node.width / 2,
-        y: Math.max(0, node.y - 12 / props.zoom),
+        y:
+          placement === "above"
+            ? node.y - 32 / props.zoom
+            : node.y + node.height + 32 / props.zoom,
+        placement,
       };
+    }
     const relationship = selectedRelationship();
     if (!relationship) return undefined;
     const point = midpoint(relationship.points);
-    return { x: point.x, y: point.y - 20 / props.zoom };
+    return {
+      x: point.x,
+      y: point.y - 20 / props.zoom,
+      placement: "above" as const,
+    };
   };
   const actionBarState = () => {
-    if (!props.actionBarVisible || interactionActive()) return undefined;
+    if (!props.actionBarVisible || !actionBarReady() || interactionActive())
+      return undefined;
     const anchor = actionAnchor();
     const node = selectedNode();
     const relationship = selectedRelationship();
@@ -904,6 +952,19 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     if (direction === "BT") return "top";
     return "bottom";
   };
+  const mobileActionInset = () =>
+    props.actionBarVisible && size().width <= 1000 ? 64 : 0;
+
+  createEffect(
+    () => (props.actionBarVisible ? (props.selectedElementId ?? "") : ""),
+    (selectedId) => {
+      setActionBarReady(false);
+      if (!selectedId) return;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => setActionBarReady(true)),
+      );
+    },
+  );
 
   onSettled(() => {
     if (!container) return;
@@ -924,13 +985,42 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
       width: props.width,
       height: props.height,
       size: size(),
+      actionInset: mobileActionInset(),
     }),
-    ({ fit, width, height, size }) => {
+    ({ fit, width, height, size, actionInset }) => {
       if (!fit || size.width <= 32 || size.height <= 32) return;
       props.onZoom(
-        Math.min(1, (size.width - 32) / width, (size.height - 32) / height),
+        Math.max(
+          0.1,
+          Math.min(
+            1,
+            (size.width - 48) / width,
+            (size.height - 48 - actionInset) / height,
+          ),
+        ),
       );
       container?.scrollTo(0, 0);
+    },
+  );
+
+  createEffect(
+    () => {
+      const draft = props.draft;
+      return draft
+        ? `${draft.point.x}:${draft.point.y}:${draft.sourceId ?? "standalone"}`
+        : "";
+    },
+    (key) => {
+      if (!key) {
+        focusedDraftKey = "";
+        return;
+      }
+      if (key === focusedDraftKey) return;
+      focusedDraftKey = key;
+      requestAnimationFrame(() => {
+        draftInput?.focus();
+        draftInput?.select();
+      });
     },
   );
 
@@ -1346,7 +1436,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           {(draft) => (
             <svg
               class="canvas-node-draft-preview"
-              viewBox={`0 0 ${props.width} ${props.height}`}
+              viewBox={`${props.viewport.x} ${props.viewport.y} ${props.viewport.width} ${props.viewport.height}`}
               aria-hidden="true"
             >
               <Show
@@ -1385,15 +1475,63 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
             </svg>
           )}
         </Show>
+        <Show when={props.draft}>
+          {(draft) => (
+            <form
+              ref={draftForm}
+              class="canvas-node-draft-editor"
+              aria-label="New node"
+              style={{
+                left: `${16 + (draft().point.x - props.viewport.x + 70) * props.zoom}px`,
+                top: `${16 + (draft().point.y - props.viewport.y + 28) * props.zoom}px`,
+                width: `${Math.max(120, 140 * props.zoom)}px`,
+              }}
+              onSubmit={(event) => {
+                event.preventDefault();
+                props.onCommitDraft();
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <label class="visually-hidden" for="canvas-node-draft-label">
+                Node label
+              </label>
+              <input
+                id="canvas-node-draft-label"
+                ref={draftInput}
+                aria-label="Node label"
+                value={draft().label}
+                onInput={(event) =>
+                  props.onChangeDraftLabel(event.currentTarget.value)
+                }
+                onBlur={() => {
+                  window.setTimeout(() => {
+                    if (
+                      draftForm &&
+                      !draftForm.contains(document.activeElement)
+                    )
+                      props.onCommitDraft();
+                  }, 0);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  props.onCancelDraft();
+                }}
+              />
+            </form>
+          )}
+        </Show>
         <Show when={actionBarState()}>
           {(state) => (
             <div
               class="canvas-action-bar"
               role="toolbar"
+              data-placement={state().anchor.placement}
               aria-label={`Actions for ${state().selected.label || state().selected.id}`}
               style={{
-                left: `${Math.max(180, Math.min(props.width * props.zoom - 180, state().anchor.x * props.zoom + 16))}px`,
-                top: `${Math.max(48, state().anchor.y * props.zoom + 16)}px`,
+                left: `${Math.max(180, Math.min(props.width * props.zoom - 180, (state().anchor.x - props.viewport.x) * props.zoom + 16))}px`,
+                top: `${Math.max(48, Math.min(props.height * props.zoom - 48, (state().anchor.y - props.viewport.y) * props.zoom + 16))}px`,
               }}
               onPointerDown={(event) => event.stopPropagation()}
             >
