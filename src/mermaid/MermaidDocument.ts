@@ -33,7 +33,11 @@ import { normalizeMermaidFamily } from "./normalizeFamily";
 import { boundaryTimerNotation, notationDiagnostics } from "./notation";
 import { MermaidLayout } from "./layout/MermaidLayout";
 import { contentOrigin } from "./layout/geometry";
-import { moveMermaidScene } from "./layout/automaticLayout";
+import {
+  moveMermaidScene,
+  moveMermaidElements,
+} from "./layout/automaticLayout";
+import { selectionMovements } from "./layout/selection";
 import type { MermaidScene } from "./layout/types";
 import type { MermaidSemanticModel } from "./model";
 import { parseMermaidDiagram } from "./runtimeContract";
@@ -46,6 +50,7 @@ export interface MermaidDocumentSnapshot {
   readonly scene: MermaidScene | undefined;
   readonly diagnostics: readonly DocumentDiagnostic[];
   readonly selectedElementId: string | undefined;
+  readonly selectedElementIds?: readonly string[];
   readonly selectedElementLabel?: string;
   readonly valid: boolean;
   readonly previewOutdated: boolean;
@@ -358,10 +363,30 @@ export class MermaidDocument {
       }
       case "select": {
         const current = this.snapshot();
+        const ids = [
+          ...new Set(
+            command.elementIds ??
+              (command.elementId ? [command.elementId] : []),
+          ),
+        ].filter((id) => current.model && modelContains(current.model, id));
+        const primary = ids.includes(command.elementId ?? "")
+          ? command.elementId
+          : ids.at(-1);
+        const multiple = ids.length > 1;
+        const selectedIds = multiple
+          ? ids.filter(
+              (id) =>
+                current.scene?.nodes.some((item) => item.id === id) ||
+                current.scene?.groups.some((item) => item.id === id),
+            )
+          : ids;
         const snapshot = await this.#present(
           this.#withHistoryAvailability({
             ...current,
-            selectedElementId: command.elementId,
+            selectedElementId: selectedIds.includes(primary ?? "")
+              ? primary
+              : selectedIds.at(-1),
+            selectedElementIds: Object.freeze(selectedIds),
           }),
           current.model,
           false,
@@ -445,6 +470,9 @@ export class MermaidDocument {
       }
       case "move":
         return await this.#move(command);
+      case "move-elements":
+      case "arrange-elements":
+        return await this.#moveElements(command);
       case "set-appearance":
         return await this.#edit(this.#appearanceEdits(command));
       case "set-notation":
@@ -728,6 +756,67 @@ export class MermaidDocument {
     );
   }
 
+  async #moveElements(
+    command: Extract<
+      PresentationCommand,
+      { type: "move-elements" | "arrange-elements" }
+    >,
+  ): Promise<CommandResult<MermaidDocumentSnapshot>> {
+    const current = this.snapshot();
+    const scene = current.scene!;
+    const timerHosts = new Map(
+      scene.nodes.flatMap((node) => {
+        const notation = boundaryTimerNotation(current.metadata, node.id);
+        return notation ? [[node.id, notation.host] as const] : [];
+      }),
+    );
+    const movements = selectionMovements(
+      scene,
+      command.elementIds,
+      command.type === "move-elements"
+        ? { x: command.dx, y: command.dy }
+        : command.arrangement,
+      timerHosts,
+    );
+    if (movements.every((item) => item.dx === 0 && item.dy === 0))
+      return { snapshot: current, patches: [] };
+    const prepared = moveMermaidElements(scene, movements, timerHosts);
+    const edits: MetadataEdit[] = movements.map((movement) => {
+      const item = [...scene.nodes, ...scene.groups].find(
+        (item) => item.id === movement.id,
+      )!;
+      const origin = contentOrigin(
+        scene.groups.find((group) => group.id === item.parentId),
+        scene.nodes.some((node) => node.id === item.id),
+      );
+      return {
+        type: "set",
+        path: this.#positionPath(item.id),
+        value: {
+          x: Math.max(0, item.x + movement.dx - origin.x),
+          y: Math.max(0, item.y + movement.dy - origin.y),
+        },
+      };
+    });
+    for (const relationship of prepared.relationships) {
+      const before = scene.relationships.find(
+        (item) => item.id === relationship.id,
+      )!;
+      if (
+        relationship.manualRoute &&
+        relationship.manualWaypoints !== before.manualWaypoints
+      )
+        edits.push(
+          ...this.#routeEdits({
+            type: "set-route",
+            elementId: relationship.id,
+            waypoints: relationship.manualWaypoints,
+          }),
+        );
+    }
+    return await this.#edit(edits, prepared);
+  }
+
   async #replaceSource(
     source: string,
   ): Promise<CommandResult<MermaidDocumentSnapshot>> {
@@ -832,13 +921,24 @@ export class MermaidDocument {
       !modelContains(parsed.model, selectedElementId)
         ? undefined
         : selectedElementId;
+    const selectedElementIds = Object.freeze(
+      selectedElementId !== previous?.selectedElementId
+        ? reconciledSelection
+          ? [reconciledSelection]
+          : []
+        : (
+            previous?.selectedElementIds ??
+            (reconciledSelection ? [reconciledSelection] : [])
+          ).filter((id) => !valid || modelContains(parsed.model, id)),
+    );
     return Object.freeze({
       source,
       model: valid ? parsed.model : previous?.model,
       metadata: valid ? parsed.metadata : previous?.metadata,
       scene: previous?.scene,
       diagnostics: Object.freeze([...parsed.diagnostics]),
-      selectedElementId: reconciledSelection,
+      selectedElementId: reconciledSelection ?? selectedElementIds.at(-1),
+      selectedElementIds,
       valid,
       previewOutdated: !valid && previous?.scene !== undefined,
       dirty: source !== this.#initialSource,
@@ -1388,6 +1488,8 @@ export class MermaidDocument {
       return presentationAvailability({
         "edit-metadata": unavailable,
         move: unavailable,
+        "move-elements": unavailable,
+        "arrange-elements": unavailable,
         "set-appearance": unavailable,
         "set-notation": unavailable,
         "set-attribute": unavailable,
@@ -1430,6 +1532,8 @@ export class MermaidDocument {
     return presentationAvailability({
       "edit-metadata": available,
       move: node || group ? available : selectReason,
+      "move-elements": available,
+      "arrange-elements": available,
       "set-appearance":
         relationship?.identity.kind === "ambiguous"
           ? disabled("This relationship has no unique authored identity.")

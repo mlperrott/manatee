@@ -769,11 +769,82 @@ button:disabled {
 .mermaid-surface {
   cursor: default;
   display: flex;
+  flex-direction: column;
   touch-action: pan-x pan-y pinch-zoom;
 }
 
 .mermaid-surface.is-placing-node {
   cursor: crosshair;
+}
+
+.canvas-selection-tools {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px;
+  color: #243943;
+  background: rgb(255 255 255 / 97%);
+  border-bottom: 1px solid #e0e7e8;
+  font-size: 12px;
+  max-width: 100%;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.canvas-selection-tools button,
+.canvas-selection-tools select {
+  min-height: 44px;
+  min-width: 44px;
+  max-width: 100%;
+  padding: 0 10px;
+  color: inherit;
+  background: #fff;
+  border: 1px solid #c8d8d7;
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.canvas-selection-tools button:hover {
+  background: #eef5f2;
+}
+.canvas-selection-tools button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.canvas-selection-tools label {
+  min-width: 0;
+}
+.canvas-selection-tools button[aria-pressed="true"] {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.selection-move-controls {
+  display: flex;
+  gap: 4px;
+}
+.selection-arrangement-help {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+.mermaid-surface.is-selecting-multiple,
+.mermaid-surface.is-selecting-multiple * {
+  touch-action: none;
+}
+.selection-marquee {
+  fill: #2563eb20;
+  stroke: #2563eb;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.mermaid-surface.has-selection-modifier .node-quick-add,
+.mermaid-surface.is-selecting-multiple .node-quick-add {
+  pointer-events: none;
+  visibility: hidden;
 }
 
 .mermaid-surface:focus-visible {
@@ -782,6 +853,7 @@ button:disabled {
 }
 
 .mermaid-surface__keyboard-help {
+  pointer-events: none;
   position: absolute;
   z-index: 3;
   right: 10px;

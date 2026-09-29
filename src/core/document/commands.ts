@@ -39,6 +39,17 @@ export interface RouteWaypoint {
 export type PresentationCommand =
   | { readonly type: "edit-metadata"; readonly edits: readonly MetadataEdit[] }
   | {
+      readonly type: "move-elements";
+      readonly elementIds: readonly string[];
+      readonly dx: number;
+      readonly dy: number;
+    }
+  | {
+      readonly type: "arrange-elements";
+      readonly elementIds: readonly string[];
+      readonly arrangement: Arrangement;
+    }
+  | {
       readonly type: "move";
       readonly elementId: string;
       readonly dx: number;
@@ -133,6 +144,7 @@ export type DocumentCommand =
   | {
       readonly type: "select";
       readonly elementId: string | undefined;
+      readonly elementIds?: readonly string[];
     }
   | {
       readonly type: "identify-relationship";
@@ -143,6 +155,16 @@ export type DocumentCommand =
   | { readonly type: "undo" }
   | { readonly type: "redo" }
   | PresentationCommand;
+
+export type Arrangement =
+  | "left"
+  | "center"
+  | "right"
+  | "top"
+  | "middle"
+  | "bottom"
+  | "horizontal"
+  | "vertical";
 
 export interface CommandResult<Snapshot> {
   readonly snapshot: Snapshot;

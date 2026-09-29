@@ -1,4 +1,5 @@
 import { manualRoute, routeWithStatus } from "./routing";
+import { expandedMovements, type ElementMovement } from "./selection";
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { ElkNode } from "elkjs/lib/elk-api";
 
@@ -966,71 +967,56 @@ export function moveMermaidScene(
   dy: number,
   boundaryTimerHosts: ReadonlyMap<string, string> = new Map(),
 ): MermaidScene {
-  const movedGroups = new Set<string>();
-  if (scene.groups.some(({ id }) => id === elementId)) {
-    movedGroups.add(elementId);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const group of scene.groups) {
-        if (
-          group.parentId &&
-          movedGroups.has(group.parentId) &&
-          !movedGroups.has(group.id)
-        ) {
-          movedGroups.add(group.id);
-          changed = true;
-        }
-      }
-    }
-  }
-
-  const movedNodes = new Set(
-    scene.nodes
-      .filter(
-        (node) =>
-          node.id === elementId ||
-          (node.parentId !== undefined && movedGroups.has(node.parentId)),
-      )
-      .map(({ id }) => id),
+  return moveMermaidElements(
+    scene,
+    [{ id: elementId, dx, dy }],
+    boundaryTimerHosts,
   );
-  for (const [timerId, hostId] of boundaryTimerHosts) {
-    if (movedNodes.has(hostId)) movedNodes.add(timerId);
-  }
+}
+
+export function moveMermaidElements(
+  scene: MermaidScene,
+  movements: readonly ElementMovement[],
+  boundaryTimerHosts: ReadonlyMap<string, string> = new Map(),
+): MermaidScene {
+  const deltas = expandedMovements(scene, movements, boundaryTimerHosts);
+  const roots = new Set(movements.map((item) => item.id));
 
   const nodes = scene.nodes.map((node) =>
-    movedNodes.has(node.id)
+    deltas.has(node.id)
       ? Object.freeze({
           ...node,
-          x: node.x + dx,
-          y: node.y + dy,
-          manual: node.id === elementId ? true : node.manual,
+          x: node.x + deltas.get(node.id)!.dx,
+          y: node.y + deltas.get(node.id)!.dy,
+          manual: roots.has(node.id) ? true : node.manual,
         })
       : node,
   );
   const groups = expandGroups(
     scene.groups.map((group) =>
-      movedGroups.has(group.id)
+      deltas.has(group.id)
         ? Object.freeze({
             ...group,
-            x: group.x + dx,
-            y: group.y + dy,
+            x: group.x + deltas.get(group.id)!.dx,
+            y: group.y + deltas.get(group.id)!.dy,
           })
         : group,
     ),
     nodes,
   );
-  const movedElements = new Set([...movedGroups, ...movedNodes]);
   const relationships = scene.relationships.map((relationship) =>
     relationship.manualRoute &&
-    movedElements.has(relationship.source) &&
-    movedElements.has(relationship.target)
+    deltas.has(relationship.source) &&
+    deltas.has(relationship.target) &&
+    deltas.get(relationship.source)!.dx ===
+      deltas.get(relationship.target)!.dx &&
+    deltas.get(relationship.source)!.dy === deltas.get(relationship.target)!.dy
       ? Object.freeze({
           ...relationship,
           manualWaypoints: Object.freeze(
             relationship.manualWaypoints.map((point) => ({
-              x: point.x + dx,
-              y: point.y + dy,
+              x: point.x + deltas.get(relationship.source)!.dx,
+              y: point.y + deltas.get(relationship.source)!.dy,
             })),
           ),
         })

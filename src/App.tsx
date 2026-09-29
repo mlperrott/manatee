@@ -331,6 +331,7 @@ function Studio() {
           ...(current.selectedElementId
             ? { selectedElementId: current.selectedElementId }
             : {}),
+          selectedElementIds: current.selectedElementIds ?? [],
           outdated: current.previewOutdated,
           title: "Manatee Mermaid diagram",
           interactive: true,
@@ -1755,6 +1756,31 @@ function Studio() {
                 onZoom={updateZoom}
                 disabled={!snapshot()?.commands.visualEditing}
                 selectedElementId={snapshot()?.selectedElementId}
+                selectedElementIds={snapshot()?.selectedElementIds ?? []}
+                boundaryTimerHosts={
+                  new Map(
+                    (snapshot()?.scene?.nodes ?? []).flatMap((node) => {
+                      const timer = boundaryTimerNotation(
+                        snapshot()?.metadata,
+                        node.id,
+                      );
+                      return timer ? [[node.id, timer.host] as const] : [];
+                    }),
+                  )
+                }
+                onSelectElements={(elementIds, elementId) =>
+                  void execute({ type: "select", elementIds, elementId })
+                }
+                onMoveElements={(elementIds, dx, dy) =>
+                  void execute({ type: "move-elements", elementIds, dx, dy })
+                }
+                onArrange={(arrangement) =>
+                  void execute({
+                    type: "arrange-elements",
+                    elementIds: snapshot()?.selectedElementIds ?? [],
+                    arrangement,
+                  })
+                }
                 onSelect={(id) =>
                   void execute({ type: "select", elementId: id })
                 }
@@ -2124,13 +2150,22 @@ function Studio() {
               )}
             </Show>
             <Show
-              when={snapshot()?.selectedElementId}
+              when={
+                snapshot()?.selectedElementId &&
+                (snapshot()?.selectedElementIds?.length ?? 0) <= 1
+              }
               fallback={
                 <div class="inspector-empty">
                   <span class="inspector-empty__icon" aria-hidden="true" />
-                  <strong>No selection</strong>
+                  <strong>
+                    {(snapshot()?.selectedElementIds?.length ?? 0) > 1
+                      ? `${snapshot()?.selectedElementIds?.length} elements selected`
+                      : "No selection"}
+                  </strong>
                   <p>
-                    Select an element on the canvas to change its appearance.
+                    {(snapshot()?.selectedElementIds?.length ?? 0) > 1
+                      ? "Use the canvas selection controls to move, align or distribute these elements."
+                      : "Select an element on the canvas to change its appearance."}
                   </p>
                   <p class="desktop-only">
                     Arrow keys select elements. Alt or Option + arrow moves a

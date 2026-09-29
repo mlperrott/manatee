@@ -10,6 +10,7 @@ import type {
 
 export interface MermaidSvgOptions {
   readonly selectedElementId?: string;
+  readonly selectedElementIds?: readonly string[];
   readonly outdated?: boolean;
   readonly title?: string;
   readonly interactive?: boolean;
@@ -245,6 +246,9 @@ export function renderMermaidSvg(
   options: MermaidSvgOptions = {},
 ): string {
   const selection = options.selectedElementId;
+  const selections = new Set(
+    options.selectedElementIds ?? (selection ? [selection] : []),
+  );
   const groupById = new Map(scene.groups.map((group) => [group.id, group]));
   const depth = (id: string): number => {
     let parent = groupById.get(id)?.parentId;
@@ -258,7 +262,7 @@ export function renderMermaidSvg(
   const groups = [...scene.groups]
     .sort((a, b) => depth(a.id) - depth(b.id))
     .map((group) => {
-      const selected = group.id === selection ? " selected" : "";
+      const selected = selections.has(group.id) ? " selected" : "";
       const fill = paint(group.style.fill, "#f1f5f9");
       const stroke = paint(group.style.outline.color, "#94a3b8");
       const processContainer =
@@ -322,7 +326,7 @@ export function renderMermaidSvg(
     .join("");
   const nodes = scene.nodes
     .map((node) => {
-      const selected = node.id === selection ? " selected" : "";
+      const selected = selections.has(node.id) ? " selected" : "";
       const externalLabel = hasExternalLabel(node.notation);
       const bounds = nodeLabelBounds(node);
       const nodeLabel = label(
@@ -338,7 +342,10 @@ export function renderMermaidSvg(
   const selectedNode = scene.nodes.find((node) => node.id === selection);
   const interactionScale = options.interactionScale ?? 1;
   const quickAddHandles =
-    options.interactive && options.quickAdd && selectedNode
+    options.interactive &&
+    options.quickAdd &&
+    selectedNode &&
+    selections.size <= 1
       ? (["top", "right", "bottom", "left"] as const)
           .map((direction) => {
             const offset = 18 * interactionScale;

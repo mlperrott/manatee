@@ -1,6 +1,38 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
+test("touch multi-selection aligns and moves without enabling source editing", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "touch-selection.mmd",
+    mimeType: "text/plain",
+    buffer: Buffer.from("flowchart LR\nA[First] --> B[Second]\nB --> C[Third]"),
+  });
+  await expect(page.locator('.node[data-element-id="A"]')).toBeVisible();
+  await page
+    .getByRole("button", { name: "Select multiple", exact: true })
+    .tap();
+  await page.locator('.node[data-element-id="A"]').tap();
+  await page.locator('.node[data-element-id="B"]').tap();
+  await expect(page.locator(".node.selected")).toHaveCount(2);
+  await page.getByLabel("Arrange selection").selectOption("top");
+  await page.getByRole("button", { name: "Apply", exact: true }).tap();
+  const before = Number(
+    await page.locator('.node[data-element-id="A"] > rect').getAttribute("x"),
+  );
+  await page
+    .getByRole("button", { name: "Move selected elements right", exact: true })
+    .tap();
+  await expect(
+    page.locator('.node[data-element-id="A"] > rect'),
+  ).toHaveAttribute("x", String(before + 10));
+  await noPageOverflow(page);
+  await page.locator('.node[data-element-id="B"]').tap();
+  await expect(page.locator(".node.selected")).toHaveCount(1);
+});
+
 async function view(page: Page, name: "Canvas" | "Source" | "Inspector") {
   await page
     .getByRole("navigation", { name: "Workspace views" })

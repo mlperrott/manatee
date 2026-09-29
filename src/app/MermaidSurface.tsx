@@ -8,8 +8,13 @@ import type {
 import type {
   ConnectionDock,
   ConnectionEndpoint,
+  Arrangement,
 } from "../core/document/commands";
 import { normalizeRoutePoints, route } from "../mermaid/layout/routing";
+import {
+  expandedMovements,
+  selectionMovements,
+} from "../mermaid/layout/selection";
 
 export interface MermaidSurfaceProps {
   readonly svg: string;
@@ -22,6 +27,18 @@ export interface MermaidSurfaceProps {
   readonly onZoom: (zoom: number) => void;
   readonly disabled: boolean;
   readonly selectedElementId: string | undefined;
+  readonly selectedElementIds: readonly string[];
+  readonly boundaryTimerHosts: ReadonlyMap<string, string>;
+  readonly onSelectElements: (
+    ids: readonly string[],
+    primary: string | undefined,
+  ) => void;
+  readonly onMoveElements: (
+    ids: readonly string[],
+    dx: number,
+    dy: number,
+  ) => void;
+  readonly onArrange: (arrangement: Arrangement) => void;
   readonly onSelect: (elementId: string | undefined) => void;
   readonly onNudge: (elementId: string, dx: number, dy: number) => void;
   readonly sourceEditing: boolean;
@@ -904,8 +921,21 @@ function updateRoutePreview(
 
 type SurfaceDrag =
   | {
+      readonly kind: "marquee";
+      readonly pointerId: number;
+      readonly x: number;
+      readonly y: number;
+      readonly touch: boolean;
+      readonly start: Point;
+      readonly additive: boolean;
+      moved: boolean;
+      end: Point;
+    }
+  | {
       readonly kind: "element";
       readonly id: string | undefined;
+      readonly ids: readonly string[];
+      readonly toggle: boolean;
       readonly x: number;
       readonly y: number;
       readonly pointerId: number;
@@ -961,22 +991,144 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
   // Assigned by Solid's bare-ref transform from ref={container}.
   // oxlint-disable-next-line no-unassigned-vars
   let container: HTMLDivElement | undefined;
+  // Assigned by Solid's bare-ref transform.
+  // oxlint-disable-next-line no-unassigned-vars
+  let selectionTools: HTMLDivElement | undefined;
   // Assigned by Solid's bare-ref transform from the staged draft form.
   // oxlint-disable-next-line no-unassigned-vars
   let draftForm: HTMLFormElement | undefined;
   // oxlint-disable-next-line no-unassigned-vars
   let draftInput: HTMLInputElement | undefined;
   let focusedDraftKey = "";
-  const [size, setSize] = createSignal({ width: 0, height: 0 });
+  const [size, setSize] = createSignal({ width: 0, height: 0, toolsHeight: 0 });
   const [announcement, setAnnouncement] = createSignal("");
+  const [multipleMode, setMultipleMode] = createSignal(false);
+  const [selectionModifier, setSelectionModifier] = createSignal(false);
+  const [arrangement, setArrangement] = createSignal<Arrangement>("left");
   const [interactionActive, setInteractionActive] = createSignal(false);
   const [actionBarReady, setActionBarReady] = createSignal(false);
   const [selectedWaypoint, setSelectedWaypoint] = createSignal<
     { readonly relationshipId: string; readonly pointIndex: number } | undefined
   >();
   let drag: SurfaceDrag | undefined;
+  let restoreArrangement: (() => void) | undefined;
+
+  const clearArrangement = () => {
+    restoreArrangement?.();
+    restoreArrangement = undefined;
+  };
+  const arrangementError = () => {
+    if (!props.scene) return "No diagram available.";
+    try {
+      selectionMovements(
+        props.scene,
+        props.selectedElementIds,
+        arrangement(),
+        props.boundaryTimerHosts,
+      );
+      return "";
+    } catch (error) {
+      return (error as Error).message;
+    }
+  };
+  const previewArrangement = () => {
+    clearArrangement();
+    if (!props.scene || arrangementError()) return;
+    const movements = selectionMovements(
+      props.scene,
+      props.selectedElementIds,
+      arrangement(),
+      props.boundaryTimerHosts,
+    );
+    const deltas = expandedMovements(
+      props.scene,
+      movements,
+      props.boundaryTimerHosts,
+    );
+    const saved = [
+      ...(container?.querySelectorAll<SVGElement>(
+        ".node[data-element-id],.group[data-element-id],.relationship[data-element-id]",
+      ) ?? []),
+    ].map((element) => ({
+      element,
+      markup: element.innerHTML,
+      transform: element.getAttribute("transform"),
+    }));
+    restoreArrangement = () => {
+      for (const { element, markup, transform } of saved) {
+        element.innerHTML = markup;
+        restoreAttribute(element, "transform", transform);
+      }
+    };
+    for (const { element } of saved) {
+      const delta = deltas.get(element.dataset.elementId ?? "");
+      if (delta)
+        element.setAttribute("transform", `translate(${delta.dx} ${delta.dy})`);
+    }
+    for (const preview of relationshipPreviews(
+      props.scene,
+      container,
+      new Set(deltas.keys()),
+    )) {
+      const source = deltas.get(preview.relationship.source) ?? {
+        dx: 0,
+        dy: 0,
+      };
+      const target = deltas.get(preview.relationship.target) ?? {
+        dx: 0,
+        dy: 0,
+      };
+      const points =
+        source.dx === target.dx && source.dy === target.dy
+          ? previewPoints(
+              preview.relationship.points,
+              true,
+              true,
+              source.dx,
+              source.dy,
+            )
+          : previewPoints(
+              previewPoints(
+                preview.relationship.points,
+                true,
+                false,
+                source.dx,
+                source.dy,
+              ),
+              false,
+              true,
+              target.dx,
+              target.dy,
+            );
+      updateRoutePreview(preview, points);
+    }
+  };
+
+  createEffect(
+    () => props.svg,
+    () => clearArrangement(),
+  );
+
+  const selectElements = (ids: readonly string[], primary = ids.at(-1)) => {
+    clearArrangement();
+    props.onSelectElements(ids, primary);
+    setAnnouncement(`${ids.length} elements selected.`);
+  };
+  const toggleElement = (id: string) => {
+    const ids = props.selectedElementIds.filter(
+      (candidate) =>
+        props.scene?.nodes.some((item) => item.id === candidate) ||
+        props.scene?.groups.some((item) => item.id === candidate),
+    );
+    selectElements(
+      ids.includes(id)
+        ? ids.filter((candidate) => candidate !== id)
+        : [...ids, id],
+    );
+  };
 
   const selectAndAnnounce = (id: string | undefined) => {
+    clearArrangement();
     props.onSelect(id);
     if (!id) {
       setAnnouncement("Selection cleared.");
@@ -1111,7 +1263,14 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     };
   };
   const actionBarState = () => {
-    if (!props.actionBarVisible || !actionBarReady() || interactionActive())
+    if (
+      props.selectedElementIds.length > 1 ||
+      multipleMode() ||
+      selectionModifier() ||
+      !props.actionBarVisible ||
+      !actionBarReady() ||
+      interactionActive()
+    )
       return undefined;
     const anchor = actionAnchor();
     const node = selectedNode();
@@ -1164,15 +1323,28 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
 
   onSettled(() => {
     if (!container) return;
+    const trackModifiers = (event: KeyboardEvent) =>
+      setSelectionModifier(event.shiftKey || event.ctrlKey || event.metaKey);
+    const clearModifiers = () => setSelectionModifier(false);
+    window.addEventListener("keydown", trackModifiers);
+    window.addEventListener("keyup", trackModifiers);
+    window.addEventListener("blur", clearModifiers);
     const observer = new ResizeObserver(() => {
       if (container)
         setSize({
           width: container.clientWidth,
           height: container.clientHeight,
+          toolsHeight: selectionTools?.offsetHeight ?? 0,
         });
     });
     observer.observe(container);
-    return () => observer.disconnect();
+    if (selectionTools) observer.observe(selectionTools);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("keydown", trackModifiers);
+      window.removeEventListener("keyup", trackModifiers);
+      window.removeEventListener("blur", clearModifiers);
+    };
   });
 
   createEffect(
@@ -1191,7 +1363,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           Math.min(
             1,
             (size.width - 48) / width,
-            (size.height - 48 - actionInset) / height,
+            (size.height - size.toolsHeight - 48 - actionInset) / height,
           ),
         ),
       );
@@ -1226,6 +1398,8 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         "diagram-surface": true,
         "mermaid-surface": true,
         "is-placing-node": props.placementMode,
+        "is-selecting-multiple": multipleMode(),
+        "has-selection-modifier": selectionModifier(),
       }}
       ref={container}
       role="application"
@@ -1237,7 +1411,8 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         if (
           event.target instanceof HTMLInputElement ||
           event.target instanceof HTMLSelectElement ||
-          event.target instanceof HTMLTextAreaElement
+          event.target instanceof HTMLTextAreaElement ||
+          event.target instanceof HTMLButtonElement
         )
           return;
         const routeHandle =
@@ -1306,7 +1481,10 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         }
         if (event.key === "Escape") {
           event.preventDefault();
+          const cancelled = drag !== undefined;
           clearDrag();
+          clearArrangement();
+          if (cancelled) return;
           if (props.placementMode) {
             props.onCancelInteraction();
             setAnnouncement("Node placement cancelled.");
@@ -1316,6 +1494,18 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           return;
         }
         if (props.disabled) return;
+        if (
+          event.key.toLowerCase() === "a" &&
+          (event.ctrlKey || event.metaKey)
+        ) {
+          event.preventDefault();
+          selectElements(
+            [...(props.scene?.groups ?? []), ...(props.scene?.nodes ?? [])].map(
+              (item) => item.id,
+            ),
+          );
+          return;
+        }
         if (
           event.key.toLowerCase() === "n" &&
           !event.ctrlKey &&
@@ -1336,7 +1526,8 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           event.key === "Enter" &&
           (event.ctrlKey || event.metaKey) &&
           selectedId &&
-          selectedIsNode
+          selectedIsNode &&
+          props.selectedElementIds.length <= 1
         ) {
           event.preventDefault();
           if (props.sourceEditing)
@@ -1344,19 +1535,30 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           else props.onRequestSourceEditing();
           return;
         }
-        if ((event.key === "Enter" || event.key === "F2") && selectedId) {
+        if (
+          (event.key === "Enter" || event.key === "F2") &&
+          selectedId &&
+          props.selectedElementIds.length <= 1
+        ) {
           event.preventDefault();
           if (props.sourceEditing) props.onEditLabel(selectedId);
           else props.onRequestSourceEditing();
           return;
         }
-        if (event.key === "Delete" && selectedId) {
+        if (
+          event.key === "Delete" &&
+          selectedId &&
+          props.selectedElementIds.length <= 1
+        ) {
           event.preventDefault();
           if (props.sourceEditing) props.onDelete(selectedId);
           else props.onRequestSourceEditing();
           return;
         }
-        const items = navigationItems(props.scene);
+        const items = navigationItems(props.scene).filter(
+          (item) =>
+            !event.shiftKey || event.altKey || item.type !== "connection",
+        );
         const direction = {
           ArrowLeft: -1,
           ArrowUp: -1,
@@ -1375,7 +1577,20 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
                 ? 0
                 : items.length - 1
               : (current + direction + items.length) % items.length;
-          selectAndAnnounce(items[next]!.id);
+          const nextId = items[next]!.id;
+          if (event.shiftKey)
+            selectElements(
+              [
+                ...new Set([
+                  ...props.selectedElementIds.filter((id) =>
+                    items.some((item) => item.id === id),
+                  ),
+                  nextId,
+                ]),
+              ],
+              nextId,
+            );
+          else selectAndAnnounce(nextId);
           return;
         }
         if (!id) return;
@@ -1393,7 +1608,13 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         }[event.key];
         if (!movement) return;
         event.preventDefault();
-        props.onNudge(id, movement[0]!, movement[1]!);
+        if (props.selectedElementIds.length > 1)
+          props.onMoveElements(
+            props.selectedElementIds,
+            movement[0]!,
+            movement[1]!,
+          );
+        else props.onNudge(id, movement[0]!, movement[1]!);
         const item = items.find((candidate) => candidate.id === id);
         setAnnouncement(
           `${item?.label ?? id} moved ${event.key.replace("Arrow", "").toLowerCase()}.`,
@@ -1405,6 +1626,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           return;
         }
         if (props.disabled || event.button !== 0) return;
+        clearArrangement();
         clearDrag();
         const routeGroup =
           event.target instanceof Element
@@ -1570,12 +1792,47 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         }
         const draggableGroup =
           movable(group) &&
-          (event.pointerType !== "touch" || group?.classList.contains("node"));
+          (event.pointerType !== "touch" ||
+            group?.classList.contains("node") ||
+            multipleMode());
         const id = group?.dataset.elementId;
+        const toggle =
+          event.shiftKey || event.ctrlKey || event.metaKey || multipleMode();
+        if (!group && (event.pointerType !== "touch" || multipleMode())) {
+          const start = diagramPoint(container, event.clientX, event.clientY);
+          if (start) {
+            drag = {
+              kind: "marquee",
+              pointerId: event.pointerId,
+              x: event.clientX,
+              y: event.clientY,
+              touch: event.pointerType === "touch",
+              start,
+              end: start,
+              additive: toggle,
+              moved: false,
+            };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            event.preventDefault();
+          }
+          return;
+        }
+        const ids =
+          id &&
+          props.selectedElementIds.includes(id) &&
+          props.selectedElementIds.length > 1
+            ? props.selectedElementIds
+            : id
+              ? [id]
+              : [];
         const movedIds =
           draggableGroup && id
-            ? movedElementIds(props.scene, id)
+            ? new Set(
+                ids.flatMap((id) => [...movedElementIds(props.scene, id)]),
+              )
             : new Set<string>();
+        for (const [timer, host] of props.boundaryTimerHosts)
+          if (movedIds.has(host)) movedIds.add(timer);
         const groups = draggableGroup
           ? [
               ...(container?.querySelectorAll<SVGElement>(
@@ -1588,6 +1845,8 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         drag = {
           kind: "element",
           id,
+          ids,
+          toggle,
           x: event.clientX,
           y: event.clientY,
           pointerId: event.pointerId,
@@ -1615,6 +1874,20 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         )
           return;
         drag.moved = true;
+        if (drag.kind === "marquee") {
+          const end = diagramPoint(container, event.clientX, event.clientY);
+          if (!end) return;
+          drag.end = end;
+          const overlay = interactionOverlay(container);
+          const rect = svgElement("rect");
+          rect.setAttribute("class", "selection-marquee");
+          rect.setAttribute("x", String(Math.min(drag.start.x, end.x)));
+          rect.setAttribute("y", String(Math.min(drag.start.y, end.y)));
+          rect.setAttribute("width", String(Math.abs(end.x - drag.start.x)));
+          rect.setAttribute("height", String(Math.abs(end.y - drag.start.y)));
+          overlay?.append(rect);
+          return;
+        }
         if (drag.kind === "route") {
           const dx = screenDx / props.zoom;
           const dy = screenDy / props.zoom;
@@ -1689,10 +1962,24 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           props.zoom,
           drag.snapX,
           drag.snapY,
-          event.altKey,
+          event.altKey || drag.ids.length > 1,
         );
-        drag.dx = snapped.dx;
-        drag.dy = snapped.dy;
+        let delta = { dx: snapped.dx, dy: snapped.dy };
+        if (drag.ids.length > 1 && props.scene) {
+          try {
+            delta =
+              selectionMovements(
+                props.scene,
+                drag.ids,
+                { x: snapped.dx, y: snapped.dy },
+                props.boundaryTimerHosts,
+              )[0] ?? delta;
+          } catch {
+            return;
+          }
+        }
+        drag.dx = delta.dx;
+        drag.dy = delta.dy;
         drag.snapX = snapped.snapX;
         drag.snapY = snapped.snapY;
         for (const candidate of drag.groups)
@@ -1721,6 +2008,38 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         clearDrag();
         if (event.currentTarget.hasPointerCapture(event.pointerId))
           event.currentTarget.releasePointerCapture(event.pointerId);
+        if (completed.kind === "marquee") {
+          if (!moved) {
+            if (!completed.additive) selectAndAnnounce(undefined);
+            return;
+          }
+          const bounds = {
+            x: Math.min(completed.start.x, completed.end.x),
+            y: Math.min(completed.start.y, completed.end.y),
+            width: Math.abs(completed.end.x - completed.start.x),
+            height: Math.abs(completed.end.y - completed.start.y),
+          };
+          const ids = [
+            ...(props.scene?.groups ?? []),
+            ...(props.scene?.nodes ?? []),
+          ]
+            .filter(
+              (item) =>
+                pointInBounds(item, bounds) &&
+                pointInBounds(
+                  { x: item.x + item.width, y: item.y + item.height },
+                  bounds,
+                ),
+            )
+            .map((item) => item.id);
+          selectElements([
+            ...new Set([
+              ...(completed.additive ? props.selectedElementIds : []),
+              ...ids,
+            ]),
+          ]);
+          return;
+        }
         if (completed.kind === "route") {
           selectAndAnnounce(completed.relationshipId);
           if (!moved) return;
@@ -1764,9 +2083,24 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
           return;
         }
         if (moved && completed.groups.length === 0) return;
-        selectAndAnnounce(completed.id);
-        if (moved && completed.groups.length > 0 && completed.id)
-          props.onNudge(completed.id, completed.dx, completed.dy);
+        if (
+          !moved &&
+          completed.toggle &&
+          completed.id &&
+          (props.scene?.nodes.some((item) => item.id === completed.id) ||
+            props.scene?.groups.some((item) => item.id === completed.id))
+        ) {
+          toggleElement(completed.id);
+          return;
+        }
+        if (moved && completed.groups.length > 0 && completed.id) {
+          if (completed.ids.length > 1)
+            props.onMoveElements(completed.ids, completed.dx, completed.dy);
+          else {
+            selectAndAnnounce(completed.id);
+            props.onNudge(completed.id, completed.dx, completed.dy);
+          }
+        } else selectAndAnnounce(completed.id);
       }}
       onDblClick={(event) => {
         if (
@@ -1783,6 +2117,106 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         else props.onRequestSourceEditing();
       }}
     >
+      <div
+        class="canvas-selection-tools"
+        ref={selectionTools}
+        role="group"
+        aria-label="Selection controls"
+        onPointerDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Escape") {
+            clearArrangement();
+            selectAndAnnounce(undefined);
+            container?.focus();
+          }
+        }}
+      >
+        <button
+          type="button"
+          aria-pressed={multipleMode() ? "true" : "false"}
+          disabled={props.disabled}
+          onClick={() => setMultipleMode(!multipleMode())}
+        >
+          Select multiple
+        </button>
+        <Show when={props.selectedElementIds.length > 1}>
+          <span aria-live="polite">
+            {props.selectedElementIds.length} selected
+          </span>
+          <label>
+            <span class="visually-hidden">Arrange selection</span>
+            <select
+              aria-label="Arrange selection"
+              value={arrangement()}
+              onChange={(event) => {
+                clearArrangement();
+                setArrangement(event.currentTarget.value as Arrangement);
+              }}
+            >
+              <option value="left">Align left</option>
+              <option value="center">Align horizontal centres</option>
+              <option value="right">Align right</option>
+              <option value="top">Align top</option>
+              <option value="middle">Align vertical centres</option>
+              <option value="bottom">Align bottom</option>
+              <option value="horizontal">Distribute horizontally</option>
+              <option value="vertical">Distribute vertically</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={props.disabled || Boolean(arrangementError())}
+            onClick={previewArrangement}
+          >
+            Preview
+          </button>
+          <button
+            type="button"
+            disabled={props.disabled || Boolean(arrangementError())}
+            onClick={() => {
+              clearArrangement();
+              props.onArrange(arrangement());
+            }}
+          >
+            Apply
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              clearArrangement();
+              selectAndAnnounce(undefined);
+            }}
+          >
+            Clear selection
+          </button>
+          <div class="selection-move-controls">
+            {(
+              [
+                ["left", -10, 0, "←"],
+                ["up", 0, -10, "↑"],
+                ["down", 0, 10, "↓"],
+                ["right", 10, 0, "→"],
+              ] as const
+            ).map(([direction, dx, dy, label]) => (
+              <button
+                type="button"
+                aria-label={`Move selected elements ${direction}`}
+                disabled={props.disabled}
+                onClick={() => {
+                  clearArrangement();
+                  props.onMoveElements(props.selectedElementIds, dx, dy);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <Show when={arrangementError()}>
+            <span class="selection-arrangement-help">{arrangementError()}</span>
+          </Show>
+        </Show>
+      </div>
       <div
         class="mermaid-surface__drawing"
         style={{
@@ -1999,9 +2433,12 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
         </Show>
       </div>
       <p class="mermaid-surface__keyboard-help" id="diagram-keyboard-help">
-        Arrow keys select. Alt or Option + arrow moves. N adds a node. Control
-        or Command + Enter quick-adds. Focus a route handle and use arrows to
-        move it; hold Shift for 20 pixels. Enter edits. Delete removes. Escape
+        Arrow keys select; Shift+arrow extends selection. Shift, Control or
+        Command+click toggles selection. Drag empty canvas to select a
+        rectangle. On touch, enable Select multiple first. Alt or Option + arrow
+        moves the selection; hold Shift for 20 pixels. N adds a node. Control or
+        Command + Enter quick-adds. Focus a route handle and use arrows to move
+        it; hold Shift for 20 pixels. Enter edits. Delete removes. Escape
         cancels.
       </p>
       <span class="visually-hidden" role="status" aria-live="polite">
