@@ -768,6 +768,7 @@ button:disabled {
 
 .mermaid-surface {
   cursor: default;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   touch-action: pan-x pan-y pinch-zoom;
