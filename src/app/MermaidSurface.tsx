@@ -1011,6 +1011,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     { readonly relationshipId: string; readonly pointIndex: number } | undefined
   >();
   let drag: SurfaceDrag | undefined;
+  let suppressTouchClick = false;
   let restoreArrangement: (() => void) | undefined;
 
   const clearArrangement = () => {
@@ -1323,6 +1324,19 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
 
   onSettled(() => {
     if (!container) return;
+    const surface = container;
+    const beginPointerGesture = () => (suppressTouchClick = false);
+    const ignoreCompatibilityClick = (event: MouseEvent) => {
+      if (!suppressTouchClick || event.detail === 0) return;
+      suppressTouchClick = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    // Selection is handled on pointerup. A touch compatibility click can land
+    // on a new toolbar button after selection reflows the canvas. Capture it
+    // before button handlers, but allow keyboard clicks and the next gesture.
+    surface.addEventListener("pointerdown", beginPointerGesture, true);
+    surface.addEventListener("click", ignoreCompatibilityClick, true);
     const trackModifiers = (event: KeyboardEvent) =>
       setSelectionModifier(event.shiftKey || event.ctrlKey || event.metaKey);
     const clearModifiers = () => setSelectionModifier(false);
@@ -1341,6 +1355,8 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     if (selectionTools) observer.observe(selectionTools);
     return () => {
       observer.disconnect();
+      surface.removeEventListener("pointerdown", beginPointerGesture, true);
+      surface.removeEventListener("click", ignoreCompatibilityClick, true);
       window.removeEventListener("keydown", trackModifiers);
       window.removeEventListener("keyup", trackModifiers);
       window.removeEventListener("blur", clearModifiers);
@@ -2000,6 +2016,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
       onPointerUp={(event) => {
         if (!drag || event.pointerId !== drag.pointerId) return;
         const completed = drag;
+        suppressTouchClick = completed.touch;
         const moved =
           Math.hypot(
             event.clientX - completed.x,

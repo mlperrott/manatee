@@ -1,60 +1,53 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
-test.beforeEach(async ({ page }, testInfo) => {
-  if (!testInfo.title.startsWith("touch multi-selection")) return;
-  await page.addInitScript(() => {
-    const events: unknown[] = [];
-    Object.assign(window, { __selectionEvents: events });
-    for (const type of [
-      "pointerdown",
-      "pointerup",
-      "pointercancel",
-      "gotpointercapture",
-      "lostpointercapture",
-      "click",
-    ]) {
-      document.addEventListener(
-        type,
-        (event) => {
-          const pointer = event as PointerEvent;
-          const target = event.target as Element | null;
-          events.push({
-            type,
-            time: performance.now(),
-            target: target?.tagName,
-            element: target
-              ?.closest("[data-element-id]")
-              ?.getAttribute("data-element-id"),
-            pointer: pointer.pointerId,
-            primary: pointer.isPrimary,
-            x: pointer.clientX,
-            y: pointer.clientY,
-            mode: document
-              .querySelector(".canvas-selection-tools button")
-              ?.getAttribute("aria-pressed"),
-            selected: [...document.querySelectorAll(".node.selected")].map(
-              (element) => element.getAttribute("data-element-id"),
-            ),
-          });
-        },
-        true,
-      );
-    }
+test("touch selection ignores a compatibility click retargeted to new controls", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "touch-selection.mmd",
+    mimeType: "text/plain",
+    buffer: Buffer.from("flowchart LR\nA[First] --> B[Second]"),
   });
-});
-
-test.afterEach(async ({ page }, testInfo) => {
-  if (
-    !testInfo.title.startsWith("touch multi-selection") ||
-    testInfo.status === testInfo.expectedStatus
-  )
-    return;
-  const events = await page.evaluate(
-    () =>
-      (window as unknown as { __selectionEvents: unknown[] }).__selectionEvents,
-  );
-  console.info("[DEBUG-selection]", JSON.stringify(events));
+  await expect(page.locator('.node[data-element-id="A"]')).toBeVisible();
+  await page
+    .getByRole("button", { name: "Select multiple", exact: true })
+    .tap();
+  await page.locator('.node[data-element-id="A"]').tap();
+  await page.evaluate(() => {
+    // Replay WebKit's compatibility click hitting a newly inserted control
+    // after pointerup changes selection and reflows the canvas toolbar.
+    const retarget = (event: MouseEvent) => {
+      if (document.querySelectorAll(".node.selected").length !== 2) return;
+      document.removeEventListener("click", retarget, true);
+      event.stopImmediatePropagation();
+      event.preventDefault();
+      const clear = [
+        ...document.querySelectorAll(".canvas-selection-tools button"),
+      ].find((button) => button.textContent === "Clear selection");
+      clear?.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          detail: 1,
+        }),
+      );
+    };
+    document.addEventListener("click", retarget, true);
+  });
+  await page.locator('.node[data-element-id="B"]').tap();
+  await expect(page.locator(".node.selected")).toHaveCount(2);
+  await page
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .tap();
+  await expect(page.locator(".node.selected")).toHaveCount(0);
+  await page.locator('.node[data-element-id="A"]').tap();
+  await page.locator('.node[data-element-id="B"]').tap();
+  await page
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .press("Enter");
+  await expect(page.locator(".node.selected")).toHaveCount(0);
 });
 
 test("touch multi-selection aligns and moves without enabling source editing", async ({
