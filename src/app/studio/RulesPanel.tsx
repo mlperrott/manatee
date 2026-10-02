@@ -342,6 +342,8 @@ function RuleEditor(props: {
     </form>
   );
 }
+const emptyRules: readonly Record<string, unknown>[] = [];
+
 export function RulesPanel(props: {
   rules: unknown;
   disabled: boolean;
@@ -350,7 +352,7 @@ export function RulesPanel(props: {
   const rules = createMemo(() =>
     Array.isArray(props.rules)
       ? (props.rules as Record<string, unknown>[])
-      : [],
+      : emptyRules,
   );
   const [editing, setEditing] = createSignal<{
     index: number;

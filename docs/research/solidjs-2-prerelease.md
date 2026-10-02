@@ -1,10 +1,12 @@
 # SolidJS 2 prerelease practices for Manatee
 
-Research updated: 2026-09-26. Sources are the Solid project, its release artifacts, and first-party package metadata.
+Research updated: 2026-10-02. Sources are the Solid project, its release artifacts, and first-party package metadata.
 
 ## Version decision input
 
-The Solid 2 prerelease has advanced from beta to release candidate. The current compatible core pair is `solid-js@2.0.0-rc.9` and `@solidjs/web@2.0.0-rc.9`. The npm `next` tag selects that line; the npm `beta` tag for `solid-js` points to `1.10.0-beta.0`, so installing `solid-js@beta` would not install Solid 2. First-party package metadata was rechecked on 2026-09-26 and RC.9 remains the newest Solid 2 publication; `@solidjs/vite-plugin@3.0.0-next.44` remains the aligned newest compiler plugin. The Solid team describes the RC interface as frozen while still subject to prerelease bugs. Manatee pins exact versions and upgrades the Solid packages as one tested set. [Solid 2 RC announcement](https://github.com/solidjs/solid/discussions/2995) · [RC.9 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.9) · [solid-js versions](https://www.npmjs.com/package/solid-js?activeTab=versions)
+The Solid 2 prerelease has advanced from beta to release candidate. Manatee pins `solid-js@2.0.0-rc.9`, `@solidjs/web@2.0.0-rc.9`, and the matching compiler plugin as one tested set. The npm `next` tag points to a newer RC line, while the npm `beta` tag for `solid-js` points to the Solid 1 beta line. The Solid team describes the RC interface as frozen while still subject to prerelease bugs. [Solid 2 RC announcement](https://github.com/solidjs/solid/discussions/2995) · [RC.9 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.9) · [plugin releases](https://github.com/solidjs/solid-vite-plugin/releases)
+
+On 2026-10-02, Manatee tested RC.13 with `@solidjs/vite-plugin@3.0.0-next.47`. Type checking, unit tests, build, and 150 browser tests passed, but the new runtime emitted repeated development diagnostics for wasted recomputation, unstable list identity, and hot scopes across editor workflows. The RC.9 tuple remains pinned until those findings can be evaluated without weakening the browser diagnostic gate. [RC.13 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.13)
 
 The aligned browser build stack on the research date is:
 
@@ -13,10 +15,12 @@ The aligned browser build stack on the research date is:
 | `solid-js` | `2.0.0-rc.9` | Reactive core, stores, and control flow |
 | `@solidjs/web` | `2.0.0-rc.9` | DOM runtime and JSX types |
 | `@solidjs/vite-plugin` | `3.0.0-next.44` | Solid 2 compiler and Vite integration |
-| `vite` | `8.2.2` | Development and production build |
+| `vite` | `8.3.1` | Development and production build |
 | `typescript` | `7.0.2` | Type checking |
 
-`@solidjs/vite-plugin@3.0.0-next.44` requires the RC.9 core/web pair and Vite 8 or 9. Its compiler emits output that requires the matching RC.9 runtime, including new spread and delegated-event representations. It uses Solid's OXC-based compiler by default. [Plugin RC.9 compatibility notes](https://github.com/solidjs/solid-vite-plugin/releases/tag/%40solidjs%2Fvite-plugin%403.0.0-next.44) · [Plugin documentation](https://github.com/solidjs/solid-vite-plugin/tree/c94fcf3)
+`@solidjs/vite-plugin@3.0.0-next.44` requires the RC.9 core/web pair and Vite 8 or 9. Its compiler output requires the matching runtime. It uses Solid's OXC-based compiler by default. [Plugin compatibility notes](https://github.com/solidjs/solid-vite-plugin/releases/tag/%40solidjs%2Fvite-plugin%403.0.0-next.44) · [Plugin documentation](https://github.com/solidjs/solid-vite-plugin)
+
+The plugin and core declare prerelease ranges for `@solidjs/compiler`, `@solidjs/babel-plugin`, and `@solidjs/signals`. `pnpm-workspace.yaml` pins those three to RC.9 because a fresh lockfile resolution can otherwise combine the RC.9 runtime with newer compiler or signals packages. Update all five Solid pins and these overrides together when revisiting the newer RC.
 
 ## Build shape for Manatee
 
@@ -49,7 +53,7 @@ Import reactive primitives, stores, and renderer-neutral component types from `s
 
 ### Local verification
 
-Manatee was type-checked, unit-tested, browser-tested, and built with the pins above. The production build emits `dist/client/index.html` with `/manatee/` asset URLs. Client start mode's local-development base-path request was retested with the latest plugin on 2026-09-26 and still returns 404, so `vite.config.ts` keeps the regular Vite SPA entry for `serve` and start mode for `build` and `preview`.
+Manatee was type-checked, unit-tested, browser-tested, and built with the pins above. The production build emits `dist/client/index.html` with `/manatee/` asset URLs. Client start mode's local-development base-path request returned 404 when last checked on 2026-09-26, so `vite.config.ts` keeps the regular Vite SPA entry for `serve` and start mode for `build` and `preview`.
 
 ## Idiomatic Solid 2 rules
 
@@ -110,7 +114,7 @@ The migration uses each Solid 2 capability where it matches Manatee's architectu
 - `action`, optimistic state, and `refresh` are not used for local document commands. The document model already supplies transactions, undo/redo, source patches, and deterministic reconciliation, so an additional optimistic copy would create two authorities.
 - Derived stores/projections and `<Repeat>` are not currently needed: snapshots are immutable engine outputs and the UI has no count-only repeated region. They should be introduced when a real derived collection or repetition appears, not as framework demonstrations.
 
-Recommended test pins on the research date are `vitest@5.0.0`, `@solidjs/testing-library@0.8.10`, and `playwright@1.63.0`. These versions were obtained from first-party npm package metadata; they should be rechecked when implementation begins.
+Current test pins are `vitest@5.0.3` and `@playwright/test@1.63.0`. Component tests may add `@solidjs/testing-library` when needed.
 
 ## Architecture consequence
 

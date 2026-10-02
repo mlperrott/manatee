@@ -1,0 +1,5 @@
+overrides:
+  # Solid 2 prerelease packages must move together with the core/web/plugin pins.
+  "@solidjs/babel-plugin": 2.0.0-rc.9
+  "@solidjs/compiler": 2.0.0-rc.9
+  "@solidjs/signals": 2.0.0-rc.9

@@ -7,6 +7,7 @@ import {
   For,
   onSettled,
   Show,
+  untrack,
 } from "solid-js";
 
 import {
@@ -205,6 +206,10 @@ function boundaryAttachmentOptions(
   );
 }
 
+const emptyBoundaryAttachments: Readonly<
+  ReturnType<typeof boundaryAttachmentOptions>
+> = [];
+
 function Studio() {
   const [ui, setUi] = createStore(initialEditorUiState());
   const [zoom, setZoom] = createSignal(1);
@@ -304,9 +309,10 @@ function Studio() {
     if (model.nodes.length === 1) return "second";
     return "connection";
   });
-  const boundaryAttachments = createMemo(() =>
-    boundaryAttachmentOptions(snapshot()),
-  );
+  const boundaryAttachments = createMemo(() => {
+    const options = boundaryAttachmentOptions(snapshot());
+    return options.length ? options : emptyBoundaryAttachments;
+  });
   const currentBoundaryTimer = createMemo(() => {
     const current = snapshot();
     const id = current?.selectedElementId;
@@ -341,10 +347,22 @@ function Studio() {
         })
       : "";
   });
-  const canvasBounds = createMemo(() => {
-    const scene = snapshot()?.scene;
-    return scene ? canvasViewport(scene) : undefined;
-  });
+  const canvasBounds = createMemo(
+    () => {
+      const scene = snapshot()?.scene;
+      return scene ? canvasViewport(scene) : undefined;
+    },
+    {
+      equals: (previous, next) =>
+        previous === next ||
+        (!!previous &&
+          !!next &&
+          previous.x === next.x &&
+          previous.y === next.y &&
+          previous.width === next.width &&
+          previous.height === next.height),
+    },
+  );
 
   const fail = (error: unknown) => documentSession.reportError(error);
   const execute = (command: DocumentCommand) =>
@@ -1054,12 +1072,10 @@ function Studio() {
   });
 
   createEffect(
-    () => ({
-      relationships: snapshot()?.model?.relationships.length ?? 0,
-      complete: gettingStartedComplete(),
-    }),
-    ({ relationships, complete }) => {
-      if (relationships > 0 && !complete) finishGettingStarted();
+    () => snapshot()?.model?.relationships.length ?? 0,
+    (relationships) => {
+      if (relationships > 0 && !untrack(gettingStartedComplete))
+        finishGettingStarted();
     },
   );
 
@@ -1093,7 +1109,7 @@ function Studio() {
       });
     const observer = new ResizeObserver(measure);
     observer.observe(stage);
-    measure();
+    const firstMeasure = requestAnimationFrame(measure);
     const dismissMenus = (event: Event) => {
       const target = event.target;
       const escape = event instanceof KeyboardEvent && event.key === "Escape";
@@ -1122,7 +1138,7 @@ function Studio() {
           `${viewport.height}px`,
         );
     };
-    resizeViewport();
+    const firstViewportResize = requestAnimationFrame(resizeViewport);
     viewport?.addEventListener("resize", resizeViewport);
     document.addEventListener("pointerdown", dismissMenus);
     document.addEventListener("keydown", dismissMenus);
@@ -1133,6 +1149,8 @@ function Studio() {
       document.removeEventListener("pointerdown", dismissMenus);
       document.removeEventListener("keydown", dismissMenus);
       observer.disconnect();
+      cancelAnimationFrame(firstMeasure);
+      cancelAnimationFrame(firstViewportResize);
       unsubscribeDocument();
       documentSession.dispose();
     };
