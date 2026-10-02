@@ -1,6 +1,62 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
+test.beforeEach(async ({ page }, testInfo) => {
+  if (!testInfo.title.startsWith("touch multi-selection")) return;
+  await page.addInitScript(() => {
+    const events: unknown[] = [];
+    Object.assign(window, { __selectionEvents: events });
+    for (const type of [
+      "pointerdown",
+      "pointerup",
+      "pointercancel",
+      "gotpointercapture",
+      "lostpointercapture",
+      "click",
+    ]) {
+      document.addEventListener(
+        type,
+        (event) => {
+          const pointer = event as PointerEvent;
+          const target = event.target as Element | null;
+          events.push({
+            type,
+            time: performance.now(),
+            target: target?.tagName,
+            element: target
+              ?.closest("[data-element-id]")
+              ?.getAttribute("data-element-id"),
+            pointer: pointer.pointerId,
+            primary: pointer.isPrimary,
+            x: pointer.clientX,
+            y: pointer.clientY,
+            mode: document
+              .querySelector(".canvas-selection-tools button")
+              ?.getAttribute("aria-pressed"),
+            selected: [...document.querySelectorAll(".node.selected")].map(
+              (element) => element.getAttribute("data-element-id"),
+            ),
+          });
+        },
+        true,
+      );
+    }
+  });
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (
+    !testInfo.title.startsWith("touch multi-selection") ||
+    testInfo.status === testInfo.expectedStatus
+  )
+    return;
+  const events = await page.evaluate(
+    () =>
+      (window as unknown as { __selectionEvents: unknown[] }).__selectionEvents,
+  );
+  console.info("[DEBUG-selection]", JSON.stringify(events));
+});
+
 test("touch multi-selection aligns and moves without enabling source editing", async ({
   page,
 }) => {

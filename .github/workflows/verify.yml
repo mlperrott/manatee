@@ -46,6 +46,14 @@ jobs:
       - name: Run browser compatibility tests
         run: pnpm test:browser
 
+      - name: Retain failed browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-results
+          path: test-results/
+          retention-days: 7
+
       - name: Configure GitHub Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v5
