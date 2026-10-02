@@ -89,6 +89,36 @@ async function view(page: Page, name: "Canvas" | "Source" | "Inspector") {
     .tap();
 }
 
+test("restores the selected node action bar after rapid reselection and view changes", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "action-bar.mmd",
+    mimeType: "text/plain",
+    buffer: Buffer.from("flowchart LR\nA[First] --> B[Second]"),
+  });
+  await expect(page.locator('.node[data-element-id="B"]')).toBeVisible();
+
+  await page.locator('.node[data-element-id="A"]').tap();
+  await page.locator('.node[data-element-id="B"]').tap();
+  await page.locator('.node[data-element-id="A"]').tap();
+  await expect(
+    page.getByRole("toolbar", { name: "Actions for First" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("toolbar", { name: "Actions for Second" }),
+  ).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await page.locator('.node[data-element-id="A"]').tap();
+  await view(page, "Inspector");
+  await view(page, "Canvas");
+  await expect(
+    page.getByRole("toolbar", { name: "Actions for First" }),
+  ).toBeVisible();
+});
+
 async function noPageOverflow(page: Page) {
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),

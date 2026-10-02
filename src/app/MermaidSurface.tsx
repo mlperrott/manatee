@@ -1,4 +1,10 @@
-import { createEffect, createSignal, onSettled, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onSettled,
+  Show,
+} from "solid-js";
 import type {
   Bounds,
   LayoutRelationship,
@@ -1006,7 +1012,20 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
   const [selectionModifier, setSelectionModifier] = createSignal(false);
   const [arrangement, setArrangement] = createSignal<Arrangement>("left");
   const [interactionActive, setInteractionActive] = createSignal(false);
-  const [actionBarReady, setActionBarReady] = createSignal(false);
+  const actionBarActivation = createMemo<{
+    id: string;
+    revision: number;
+  }>((previous) => {
+    const id = props.actionBarVisible ? (props.selectedElementId ?? "") : "";
+    return previous?.id === id
+      ? previous
+      : { id, revision: (previous?.revision ?? 0) + 1 };
+  });
+  const [readyActionBarRevision, setReadyActionBarRevision] = createSignal(0);
+  const actionBarReady = () => {
+    const activation = actionBarActivation();
+    return !!activation.id && readyActionBarRevision() === activation.revision;
+  };
   const [selectedWaypoint, setSelectedWaypoint] = createSignal<
     { readonly relationshipId: string; readonly pointIndex: number } | undefined
   >();
@@ -1300,16 +1319,19 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
   const mobileActionInset = () =>
     props.actionBarVisible && size().width <= 1000 ? 64 : 0;
 
-  createEffect(
-    () => (props.actionBarVisible ? (props.selectedElementId ?? "") : ""),
-    (selectedId) => {
-      setActionBarReady(false);
-      if (!selectedId) return;
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => setActionBarReady(true)),
+  createEffect(actionBarActivation, ({ id, revision }) => {
+    if (!id) return;
+    let secondFrame: number | undefined;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() =>
+        setReadyActionBarRevision(revision),
       );
-    },
-  );
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+    };
+  });
 
   createEffect(
     () => ({

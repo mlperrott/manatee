@@ -13,6 +13,9 @@ import { at, editValue, elementPath, record } from "./metadataControls";
 import { StyleFields } from "./StyleFields";
 import { RulesPanel, ScalarField } from "./RulesPanel";
 
+const emptyAttributes: readonly [string, unknown][] = [];
+const emptyUnmatched: readonly MetadataEdit[] = [];
+
 export function PresentationPanel(props: {
   snapshot: MermaidDocumentSnapshot;
   execute: (command: DocumentCommand) => Promise<boolean>;
@@ -74,9 +77,10 @@ export function PresentationPanel(props: {
     string | number | boolean
   >("");
   const [attributeError, setAttributeError] = createSignal("");
-  const attributes = createMemo(() =>
-    Object.entries(record(at(entry(), ["attributes"]))),
-  );
+  const attributes = createMemo(() => {
+    const entries = Object.entries(record(at(entry(), ["attributes"])));
+    return entries.length ? entries : emptyAttributes;
+  });
   const position = () => {
     const item = sceneItem();
     if (!item || !("x" in item)) return { x: 0, y: 0 };
@@ -92,8 +96,8 @@ export function PresentationPanel(props: {
   };
   const unmatched = createMemo(() => {
     const model = props.snapshot.model;
-    if (!model) return [];
-    return findUnmatchedMetadata(props.snapshot.metadata, {
+    if (!model) return emptyUnmatched;
+    const edits = findUnmatchedMetadata(props.snapshot.metadata, {
       nodes: new Set(model.nodes.map((item) => item.id)),
       groups: new Set(
         model.groups
@@ -118,6 +122,7 @@ export function PresentationPanel(props: {
         ),
       ),
     }).edits;
+    return edits.length ? edits : emptyUnmatched;
   });
   return (
     <div class="presentation-panel">

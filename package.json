@@ -16,8 +16,8 @@
     "test:watch": "vitest",
     "test:browser": "playwright test",
     "lint": "oxlint --deny-warnings src scripts tests vite.config.ts playwright.config.ts",
-    "format": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \"*.{html,json,ts,mjs}\" \".github/**/*.yml\"",
-    "format:write": "prettier --write \"src/**/*.{ts,tsx,css}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \"*.{html,json,ts,mjs}\" \".github/**/*.yml\"",
+    "format": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \"*.{html,json,ts,mjs}\" \".github/**/*.yml\" pnpm-workspace.yaml",
+    "format:write": "prettier --write \"src/**/*.{ts,tsx,css}\" \"scripts/**/*.mjs\" \"tests/**/*.ts\" \"*.{html,json,ts,mjs}\" \".github/**/*.yml\" pnpm-workspace.yaml",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "verify": "pnpm format && pnpm lint && pnpm check:boundaries && pnpm typecheck && pnpm test && pnpm build"
   },
@@ -27,17 +27,17 @@
     "elkjs": "0.12.0",
     "mermaid": "11.17.2",
     "solid-js": "2.0.0-rc.9",
-    "yaml": "2.9.0"
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@solidjs/vite-plugin": "3.0.0-next.44",
-    "@types/node": "24.13.4",
+    "@types/node": "24.13.6",
     "jsdom": "29.1.1",
-    "oxlint": "1.82.0",
-    "prettier": "3.9.6",
+    "oxlint": "1.86.0",
+    "prettier": "3.9.9",
     "typescript": "7.0.2",
-    "vite": "8.2.2",
-    "vitest": "5.0.0"
+    "vite": "8.3.1",
+    "vitest": "5.0.3"
   }
 }
