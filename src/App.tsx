@@ -996,7 +996,7 @@ function Studio() {
     try {
       downloadBlob(
         new Blob([savedSource], { type: "text/plain;charset=utf-8" }),
-        filename(),
+        portableFilename(filename(), "mmd"),
       );
       setExportMessage("Portable .mmd downloaded.");
       documentSession.markSaved(id, savedSource);
@@ -2158,6 +2158,7 @@ function Studio() {
                               if (event.currentTarget.value !== filename())
                                 fileHandles.delete(activeId());
                               documentSession.rename(event.currentTarget.value);
+                              event.currentTarget.value = filename();
                             }}
                           />
                         </label>

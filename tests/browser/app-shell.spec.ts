@@ -454,3 +454,33 @@ test("an invalid newly opened file cannot masquerade as the previous diagram", a
     page.getByRole("button", { name: "Download SVG", exact: true }),
   ).toBeDisabled();
 });
+
+test("downloads renamed documents with a Mermaid extension and restores empty names", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await openAdvancedProcess(page);
+  await page.getByText("Document settings", { exact: true }).click();
+  const name = page.getByRole("textbox", {
+    name: "Document name",
+    exact: true,
+  });
+  await name.fill("My-presentation");
+  await name.blur();
+  await expect(page.getByRole("tab", { selected: true })).toHaveText(
+    "My-presentation",
+  );
+  const downloadPromise = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Download .mmd", exact: true })
+    .click();
+  expect((await downloadPromise).suggestedFilename()).toBe(
+    "My-presentation.mmd",
+  );
+  await name.fill("   ");
+  await name.blur();
+  await expect(name).toHaveValue("My-presentation");
+  await expect(page.getByRole("tab", { selected: true })).toHaveText(
+    "My-presentation",
+  );
+});
