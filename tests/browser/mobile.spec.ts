@@ -166,6 +166,13 @@ for (const [width, height] of [
     for (const control of await page
       .locator("button:visible, summary:visible")
       .all()) {
+      // The empty-state actions intentionally scroll on short phones.
+      if (
+        await control.evaluate((element) =>
+          Boolean(element.closest(".canvas-empty")),
+        )
+      )
+        await control.scrollIntoViewIfNeeded();
       const box = (await control.boundingBox())!;
       expect(box.height).toBeGreaterThanOrEqual(44);
       expect(box.width).toBeGreaterThanOrEqual(44);
@@ -173,6 +180,7 @@ for (const [width, height] of [
       expect(box.x + box.width).toBeLessThanOrEqual(width!);
       expect(box.y + box.height).toBeLessThanOrEqual(height!);
     }
+    await noPageOverflow(page);
     await page.getByText("Export", { exact: true }).tap();
     await expect(
       page.getByRole("button", { name: "Download PNG" }),
