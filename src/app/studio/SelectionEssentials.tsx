@@ -6,7 +6,11 @@ import {
   flowShapes,
   type StructureEdit,
 } from "../../mermaid/authoring";
-import { connectionKindLabels, flowShapeLabels } from "./controlLabels";
+import {
+  connectionKindLabels,
+  flowShapeLabels,
+  selectedNodeKind,
+} from "./controlLabels";
 
 export function SelectionEssentials(props: {
   snapshot: MermaidDocumentSnapshot;
@@ -101,7 +105,7 @@ export function SelectionEssentials(props: {
             Shape
             <select
               aria-label="Selected node shape"
-              value={readNode().kind}
+              value={selectedNodeKind(readNode().kind)}
               onChange={(event) => edit({ kind: event.currentTarget.value })}
             >
               {(flow()

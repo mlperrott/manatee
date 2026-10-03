@@ -37,3 +37,8 @@ export const connectionKindLabels: Readonly<Record<string, string>> = {
   birel: "Relationship both ways",
   rel_b: "Reverse relationship",
 };
+
+/** Match Mermaid rectangle aliases to the single shape shown in editing controls. */
+export function selectedNodeKind(kind: string | undefined): string | undefined {
+  return kind === "square" || kind === "rect" ? "rectangle" : kind;
+}
