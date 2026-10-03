@@ -647,3 +647,45 @@ test("explores examples and visually authors a diagram on a phone", async ({
   ).toContainText("simple-bpmn.mmd");
   expect(errors).toEqual([]);
 });
+
+for (const [width, height] of [
+  [320, 568],
+  [390, 400],
+  [844, 390],
+]) {
+  test(`keeps new document choices reachable at ${width} × ${height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: width!, height: height! });
+    await page.goto("./");
+    await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
+    await page.getByText("New", { exact: true }).tap();
+    const menu = page.locator(".new-document-menu .export-menu__panel");
+    const box = (await menu.boundingBox())!;
+    const navigation = (await page
+      .getByRole("navigation", { name: "Workspace views" })
+      .boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(navigation.y);
+    await menu.getByRole("button", { name: "C4 container", exact: true }).tap();
+    await expect(page.getByLabel("Open documents (2)")).toContainText(
+      "untitled-c4-container.mmd",
+    );
+    await expect(menu).not.toBeVisible();
+  });
+}
+
+test("can scroll the empty canvas actions on a small phone", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto("./");
+  const empty = page.locator(".canvas-empty");
+  await expect(empty).toBeVisible();
+  const stage = (await page.locator(".stage").boundingBox())!;
+  const box = (await empty.boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(stage.y);
+  expect(box.y + box.height).toBeLessThanOrEqual(stage.y + stage.height);
+  await empty.getByRole("button", { name: "Browse examples" }).tap();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});

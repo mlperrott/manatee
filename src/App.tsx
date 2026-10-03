@@ -1101,12 +1101,18 @@ function Studio() {
       .then(async () => setRetiredSource(await repository.loadRetiredSource()))
       .catch(fail);
     if (!stage) return;
-    const measure = () =>
-      setUi((draft) => {
-        draft.stageWidth = Math.round(
-          stage?.getBoundingClientRect().width ?? 0,
+    const measure = () => {
+      const bounds = stage?.getBoundingClientRect();
+      document
+        .querySelector<HTMLElement>(".document-workspace-bar")
+        ?.style.setProperty(
+          "--new-document-menu-height",
+          `${Math.max(0, (bounds?.height ?? 0) - 12)}px`,
         );
+      setUi((draft) => {
+        draft.stageWidth = Math.round(bounds?.width ?? 0);
       });
+    };
     const observer = new ResizeObserver(measure);
     observer.observe(stage);
     const firstMeasure = requestAnimationFrame(measure);
