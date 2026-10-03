@@ -16,6 +16,7 @@ import type {
   ConnectionEndpoint,
   Arrangement,
 } from "../core/document/commands";
+import { selectedNodeKind } from "./studio/controlLabels";
 import { normalizeRoutePoints, route } from "../mermaid/layout/routing";
 import {
   expandedMovements,
@@ -2383,7 +2384,7 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
                   <select
                     aria-label="Canvas node type"
                     disabled={!props.sourceEditing}
-                    value={state().node?.kind}
+                    value={selectedNodeKind(state().node?.kind)}
                     onChange={(event) =>
                       props.onChangeKind(
                         state().selected.id,
