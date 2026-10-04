@@ -1038,29 +1038,37 @@ export function MermaidSurface(props: MermaidSurfaceProps) {
     restoreArrangement?.();
     restoreArrangement = undefined;
   };
-  const arrangementError = () => {
-    if (!props.scene) return "No diagram available.";
-    try {
-      selectionMovements(
-        props.scene,
-        props.selectedElementIds,
-        arrangement(),
-        props.boundaryTimerHosts,
-      );
-      return "";
-    } catch (error) {
-      return (error as Error).message;
+  const arrangementPlan = createMemo<{
+    error: string;
+    movements?: ReturnType<typeof selectionMovements>;
+  }>((previous) => {
+    let error = "Select at least two independent elements to align.";
+    if (props.selectedElementIds.length >= 2) {
+      const scene = props.scene;
+      if (!scene) error = "No diagram available.";
+      else {
+        try {
+          return {
+            error: "",
+            movements: selectionMovements(
+              scene,
+              props.selectedElementIds,
+              arrangement(),
+              props.boundaryTimerHosts,
+            ),
+          };
+        } catch (cause) {
+          error = (cause as Error).message;
+        }
+      }
     }
-  };
+    return previous?.error === error ? previous : { error };
+  });
+  const arrangementError = createMemo(() => arrangementPlan().error);
   const previewArrangement = () => {
     clearArrangement();
-    if (!props.scene || arrangementError()) return;
-    const movements = selectionMovements(
-      props.scene,
-      props.selectedElementIds,
-      arrangement(),
-      props.boundaryTimerHosts,
-    );
+    const movements = arrangementPlan().movements;
+    if (!props.scene || !movements) return;
     const deltas = expandedMovements(
       props.scene,
       movements,

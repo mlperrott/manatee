@@ -17,8 +17,13 @@ export function ExamplesGallery(props: {
     );
   });
   onSettled(() => {
-    dialog?.showModal();
-    return () => dialog?.close();
+    // Open after the new dialog's DOM has settled, so focus and modal layout
+    // do not force a synchronous layout during the reactive render.
+    const frame = requestAnimationFrame(() => dialog?.showModal());
+    return () => {
+      cancelAnimationFrame(frame);
+      dialog?.close();
+    };
   });
   return (
     <dialog

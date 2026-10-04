@@ -20,8 +20,10 @@ export function PresentationPanel(props: {
   snapshot: MermaidDocumentSnapshot;
   execute: (command: DocumentCommand) => Promise<boolean>;
 }) {
-  const id = () => props.snapshot.selectedElementId;
-  const target = () => (id() ? elementPath(props.snapshot, id()!) : undefined);
+  const id = createMemo(() => props.snapshot.selectedElementId);
+  const target = createMemo(() =>
+    id() ? elementPath(props.snapshot, id()!) : undefined,
+  );
   const edit = (edits: readonly MetadataEdit[]) =>
     props.execute({ type: "edit-metadata", edits });
   const change = (
@@ -35,24 +37,33 @@ export function PresentationPanel(props: {
       editValue([...selected.path, ...path], value),
     ]);
   };
-  const entry = () => at(props.snapshot.metadata, target()?.path ?? []);
-  const edge = () => !!target()?.edge;
-  const style = () =>
+  const entry = createMemo(() =>
+    at(props.snapshot.metadata, target()?.path ?? []),
+  );
+  const edge = createMemo(() => !!target()?.edge);
+  const authoredStyle = createMemo(() => at(entry(), ["style"]));
+  const authoredText = createMemo(() => at(entry(), ["text"]));
+  const style = createMemo(() =>
     edge()
-      ? { ...record(at(entry(), ["style"])), text: at(entry(), ["text"]) }
-      : at(entry(), ["style"]);
-  const sceneItem = () =>
+      ? { ...record(authoredStyle()), text: authoredText() }
+      : authoredStyle(),
+  );
+  const sceneItem = createMemo(() =>
     [
       ...(props.snapshot.scene?.nodes ?? []),
       ...(props.snapshot.scene?.groups ?? []),
       ...(props.snapshot.scene?.relationships ?? []),
-    ].find((item) => item.id === id());
-  const timer = () =>
-    id() ? boundaryTimerNotation(props.snapshot.metadata, id()!) : undefined;
-  const node = () =>
-    props.snapshot.model?.nodes.find((item) => item.id === id());
-  const relationship = () =>
-    props.snapshot.model?.relationships.find((item) => item.id === id());
+    ].find((item) => item.id === id()),
+  );
+  const timer = createMemo(() =>
+    id() ? boundaryTimerNotation(props.snapshot.metadata, id()!) : undefined,
+  );
+  const node = createMemo(() =>
+    props.snapshot.model?.nodes.find((item) => item.id === id()),
+  );
+  const relationship = createMemo(() =>
+    props.snapshot.model?.relationships.find((item) => item.id === id()),
+  );
   const repairId = createMemo(() => {
     const used = new Set(
       [
@@ -360,19 +371,19 @@ export function PresentationPanel(props: {
             <summary>Node attributes</summary>
             <fieldset disabled={!props.snapshot.commands.visualEditing}>
               <legend>Attributes</legend>
-              <For each={attributes()}>
-                {([name, value]) => (
+              <For each={attributes()} keyed={(attribute) => attribute[0]}>
+                {(attribute) => (
                   <div class="attribute-card">
                     <label>
                       Attribute name
                       <input
-                        aria-label={`Rename attribute ${name}`}
-                        value={name}
+                        aria-label={`Rename attribute ${attribute()[0]}`}
+                        value={attribute()[0]}
                         onChange={(event) => {
                           const next = event.currentTarget.value.trim();
                           if (
                             !next ||
-                            (next !== name &&
+                            (next !== attribute()[0] &&
                               next in record(at(entry(), ["attributes"])))
                           ) {
                             setAttributeError(
@@ -380,31 +391,39 @@ export function PresentationPanel(props: {
                             );
                             return;
                           }
-                          if (next !== name)
+                          if (next !== attribute()[0])
                             void edit([
                               {
                                 type: "set",
                                 path: [...target()!.path, "attributes", next],
-                                value: value as MetadataValue,
+                                value: attribute()[1] as MetadataValue,
                               },
                               {
                                 type: "remove",
-                                path: [...target()!.path, "attributes", name],
+                                path: [
+                                  ...target()!.path,
+                                  "attributes",
+                                  attribute()[0],
+                                ],
                               },
                             ]);
                         }}
                       />
                     </label>
                     <ScalarField
-                      label={`Attribute ${name}`}
-                      value={value as string | number | boolean}
-                      change={(next) => change(["attributes", name], next)}
+                      label={`Attribute ${attribute()[0]}`}
+                      value={attribute()[1] as string | number | boolean}
+                      change={(next) =>
+                        change(["attributes", attribute()[0]], next)
+                      }
                     />
                     <button
                       type="button"
-                      onClick={() => change(["attributes", name], undefined)}
+                      onClick={() =>
+                        change(["attributes", attribute()[0]], undefined)
+                      }
                     >
-                      Remove {name}
+                      Remove {attribute()[0]}
                     </button>
                   </div>
                 )}

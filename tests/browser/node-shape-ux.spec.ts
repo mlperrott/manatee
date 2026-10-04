@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("rectangle aliases display the selected shape on canvas and in Inspector", async ({
   page,

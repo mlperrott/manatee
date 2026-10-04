@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("normalizes all supported Mermaid families in the browser", async ({
   page,
