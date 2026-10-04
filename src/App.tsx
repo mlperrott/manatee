@@ -264,28 +264,79 @@ function Studio() {
     initialFilename: "untitled-flowchart.mmd",
     initialSource: newDocumentSources.flowchart,
   });
-  const [documentState, setDocumentState] = createSignal(
+  // The engine owns immutable snapshots. A shallow view tracks their fields
+  // independently without proxying or mutating the engine's records.
+  const [documentState, setDocumentState] = createStore(
     documentSession.state(),
+    {
+      shallow: true,
+    },
   );
-  const unsubscribeDocument = documentSession.subscribe(setDocumentState);
-  const tabs = createMemo(() => {
-    documentState();
-    return documentSession.tabs();
+  const [snapshotFields, setSnapshotFields] = createStore<
+    Partial<MermaidDocumentSnapshot>
+  >(
+    {},
+    {
+      shallow: true,
+    },
+  );
+  const [hasSnapshot, setHasSnapshot] = createSignal(false);
+  const snapshot = () =>
+    hasSnapshot() ? (snapshotFields as MermaidDocumentSnapshot) : undefined;
+  const tabSummaries = () =>
+    documentSession.tabs().map((tab) => ({
+      id: tab.id,
+      filename: tab.filename,
+      dirty: tab.source !== tab.savedSource,
+    }));
+  const [tabs, setTabs] = createSignal(tabSummaries(), {
+    equals: (previous, next) =>
+      previous.length === next.length &&
+      previous.every((tab, index) => {
+        const other = next[index]!;
+        return (
+          tab.id === other.id &&
+          tab.filename === other.filename &&
+          tab.dirty === other.dirty
+        );
+      }),
   });
-  const activeId = createMemo(() => {
-    documentState();
-    return documentSession.activeId();
-  });
-  const currentExample = createMemo(() => {
-    documentState();
-    return studioExamples.find(
-      (example) => example.id === documentSession.activeTab()?.exampleId,
+  const [commandFields, setCommandFields] = createStore<
+    Partial<MermaidDocumentSnapshot["commands"]>
+  >({}, { shallow: true });
+  let selectionIds: readonly string[] = [];
+  const [activeId, setActiveId] = createSignal(documentSession.activeId());
+  const [exampleId, setExampleId] = createSignal<string>();
+  const unsubscribeDocument = documentSession.subscribe((state) => {
+    setDocumentState(() => state);
+    const next = state.snapshot;
+    const nextIds = next?.selectedElementIds ?? [];
+    if (
+      selectionIds.length !== nextIds.length ||
+      selectionIds.some((id, index) => id !== nextIds[index])
+    )
+      selectionIds = nextIds;
+    setCommandFields(() => ({ ...next?.commands }));
+    setSnapshotFields(() =>
+      next
+        ? {
+            ...next,
+            selectedElementIds: selectionIds,
+            commands: commandFields as MermaidDocumentSnapshot["commands"],
+          }
+        : {},
     );
+    setHasSnapshot(!!state.snapshot);
+    setTabs(tabSummaries());
+    setActiveId(documentSession.activeId());
+    setExampleId(documentSession.activeTab()?.exampleId);
   });
-  const snapshot = createMemo(() => documentState().snapshot);
-  const source = createMemo(() => documentState().source);
-  const filename = createMemo(() => documentState().filename);
-  const recovery = createMemo(() => documentState().recovery);
+  const currentExample = createMemo(() =>
+    studioExamples.find((example) => example.id === exampleId()),
+  );
+  const source = () => documentState.source;
+  const filename = () => documentState.filename;
+  const recovery = () => documentState.recovery;
   const emptyFlowchart = createMemo(() => {
     const model = snapshot()?.model;
     return (
@@ -330,8 +381,18 @@ function Studio() {
   const svg = createMemo(() => {
     const current = snapshot();
     const currentScene = current?.scene;
-    const family = current?.model?.family;
+    const quickAdd = directCanvasAuthoring();
     const viewport = currentScene ? canvasViewport(currentScene) : undefined;
+    const hasScaledHandles =
+      currentScene &&
+      (currentScene.relationships.some(
+        (item) => item.id === current?.selectedElementId,
+      ) ||
+        (quickAdd &&
+          (current?.selectedElementIds?.length ?? 0) <= 1 &&
+          currentScene.nodes.some(
+            (item) => item.id === current?.selectedElementId,
+          )));
     return currentScene && viewport
       ? renderMermaidSvg(currentScene, {
           ...(current.selectedElementId
@@ -341,8 +402,8 @@ function Studio() {
           outdated: current.previewOutdated,
           title: "Manatee Mermaid diagram",
           interactive: true,
-          quickAdd: family === "flowchart" || family === "swimlane",
-          interactionScale: 1 / zoom(),
+          quickAdd,
+          interactionScale: hasScaledHandles ? 1 / zoom() : 1,
           viewport,
         })
       : "";
@@ -1080,12 +1141,18 @@ function Studio() {
   );
 
   createEffect(
-    () => ({ id: activeId(), current: snapshot() }),
-    ({ id, current }) => {
-      if (!id || !current?.scene || viewStates.has(id)) return;
-      const fit =
-        current.model !== undefined &&
-        current.model.nodes.length + current.model.groups.length > 2;
+    () => {
+      const current = snapshot();
+      return {
+        id: activeId(),
+        hasScene: !!current?.scene,
+        fit:
+          !!current?.model &&
+          current.model.nodes.length + current.model.groups.length > 2,
+      };
+    },
+    ({ id, hasScene, fit }) => {
+      if (!id || !hasScene || viewStates.has(id)) return;
       viewStates.set(id, { zoom: 1, fit });
       setZoom(1);
       setFitView(fit);
@@ -1162,6 +1229,163 @@ function Studio() {
     };
   });
 
+  const CanvasToolbar = () => (
+    <div class="stage-toolbar" aria-label="Canvas controls">
+      <span class="stage-toolbar__label">
+        Canvas{" "}
+        <Show when={ui.stageWidth > 0}>
+          <span class="stage-toolbar__measure">{ui.stageWidth}px</span>
+        </Show>
+      </span>
+      <div class="command-bar" aria-label="Edit controls">
+        <button
+          type="button"
+          class={{ "is-active": placementMode() }}
+          aria-pressed={placementMode() ? "true" : "false"}
+          onClick={() =>
+            placementMode() ? setPlacementMode(false) : armNodePlacement()
+          }
+          disabled={
+            !directCanvasAuthoring() || !snapshot()?.commands.visualEditing
+          }
+          title={
+            directCanvasAuthoring()
+              ? "Place a standalone node (N)"
+              : "Direct canvas creation currently supports flowcharts and swimlanes."
+          }
+        >
+          Add node
+        </button>
+        <button
+          type="button"
+          onClick={() => void execute({ type: "undo" })}
+          disabled={!snapshot()?.commands.undo}
+          title={
+            snapshot()?.commands.undo ? "Undo last edit" : "Nothing to undo"
+          }
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          onClick={() => void execute({ type: "redo" })}
+          disabled={!snapshot()?.commands.redo}
+          title={
+            snapshot()?.commands.redo ? "Redo last edit" : "Nothing to redo"
+          }
+        >
+          Redo
+        </button>
+        <button
+          type="button"
+          onClick={() => void execute({ type: "reset-layout" })}
+          disabled={action("reset-layout").state !== "available"}
+          title={actionTitle("reset-layout")}
+        >
+          Reset layout
+        </button>
+      </div>
+      <div class="segmented" aria-label="Zoom controls">
+        <button
+          type="button"
+          aria-label="Zoom out"
+          onClick={() => {
+            const next = Math.max(0.1, zoom() - 0.1);
+            updateFit(false);
+            updateZoom(next);
+          }}
+        >
+          −
+        </button>
+        <span>{Math.round(zoom() * 100)}%</span>
+        <button
+          type="button"
+          aria-label="Zoom in"
+          onClick={() => {
+            const next = Math.min(2, zoom() + 0.1);
+            updateFit(false);
+            updateZoom(next);
+          }}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          aria-label="Fit diagram to screen"
+          onClick={() => {
+            updateFit(true);
+          }}
+        >
+          Fit
+        </button>
+        <button
+          type="button"
+          aria-label="Show diagram at 100 percent"
+          onClick={() => {
+            updateFit(false);
+            updateZoom(1);
+          }}
+        >
+          100%
+        </button>
+      </div>
+    </div>
+  );
+
+  const ExportMenu = () => (
+    <details class="export-menu">
+      <summary class="button button--quiet">Export</summary>
+      <div class="export-menu__panel">
+        <strong>Slide-ready export</strong>
+        <label>
+          PNG scale
+          <select
+            aria-label="PNG scale"
+            value={pngScale()}
+            onChange={(event) => setPngScale(Number(event.currentTarget.value))}
+          >
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+            <option value="4">4×</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            checked={pngBackground() === "transparent"}
+            onChange={(event) =>
+              setPngBackground(
+                event.currentTarget.checked ? "transparent" : "#ffffff",
+              )
+            }
+          />
+          Transparent background
+        </label>
+        <button
+          type="button"
+          onClick={() => void exportSvg()}
+          disabled={!imageExportReady()}
+        >
+          Download SVG
+        </button>
+        <button
+          type="button"
+          onClick={() => void exportPng()}
+          disabled={!imageExportReady()}
+        >
+          Download PNG
+        </button>
+        <button
+          type="button"
+          onClick={() => void copyPng()}
+          disabled={!imageExportReady()}
+        >
+          Copy PNG
+        </button>
+      </div>
+    </details>
+  );
+
   return (
     <div class="app-shell">
       <a class="skip-link" href="#workspace">
@@ -1188,12 +1412,7 @@ function Studio() {
           <span class="document-title__filename" title={filename()}>
             {filename()}
           </span>
-          <Show
-            when={
-              tabs().find((tab) => tab.id === activeId())?.source !==
-              tabs().find((tab) => tab.id === activeId())?.savedSource
-            }
-          >
+          <Show when={tabs().find((tab) => tab.id === activeId())?.dirty}>
             <span class="dirty-badge">Changes since last download</span>
           </Show>
         </div>
@@ -1235,59 +1454,7 @@ function Studio() {
           >
             Download .mmd
           </button>
-          <details class="export-menu">
-            <summary class="button button--quiet">Export</summary>
-            <div class="export-menu__panel">
-              <strong>Slide-ready export</strong>
-              <label>
-                PNG scale
-                <select
-                  aria-label="PNG scale"
-                  value={pngScale()}
-                  onChange={(event) =>
-                    setPngScale(Number(event.currentTarget.value))
-                  }
-                >
-                  <option value="2">2×</option>
-                  <option value="3">3×</option>
-                  <option value="4">4×</option>
-                </select>
-              </label>
-              <label class="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={pngBackground() === "transparent"}
-                  onChange={(event) =>
-                    setPngBackground(
-                      event.currentTarget.checked ? "transparent" : "#ffffff",
-                    )
-                  }
-                />
-                Transparent background
-              </label>
-              <button
-                type="button"
-                onClick={() => void exportSvg()}
-                disabled={!imageExportReady()}
-              >
-                Download SVG
-              </button>
-              <button
-                type="button"
-                onClick={() => void exportPng()}
-                disabled={!imageExportReady()}
-              >
-                Download PNG
-              </button>
-              <button
-                type="button"
-                onClick={() => void copyPng()}
-                disabled={!imageExportReady()}
-              >
-                Copy PNG
-              </button>
-            </div>
-          </details>
+          <ExportMenu />
           <button
             class="button button--quiet mobile-only"
             type="button"
@@ -1356,7 +1523,7 @@ function Studio() {
                   }}
                 >
                   {tab().filename}
-                  {tab().source !== tab().savedSource ? " •" : ""}
+                  {tab().dirty ? " •" : ""}
                 </button>
                 <button
                   type="button"
@@ -1381,9 +1548,7 @@ function Studio() {
               {(tab) => (
                 <option value={tab().id}>
                   {tab().filename}
-                  {tab().source !== tab().savedSource
-                    ? " — changes since download"
-                    : ""}
+                  {tab().dirty ? " — changes since download" : ""}
                 </option>
               )}
             </For>
@@ -1476,7 +1641,7 @@ function Studio() {
           </button>
         </div>
       </Show>
-      <StatusNotice status={documentState().status} />
+      <StatusNotice status={documentState.status} />
       <Show when={retiredSource()}>
         {(readRetired) => (
           <section class="recovery-banner" aria-label="Retired source recovery">
@@ -1618,13 +1783,13 @@ function Studio() {
             </div>
             <Show when={(snapshot()?.diagnostics.length ?? 0) > 0}>
               <ul class="diagnostics" aria-label="Document diagnostics">
-                <For each={snapshot()?.diagnostics}>
+                <For each={snapshot()?.diagnostics} keyed={false}>
                   {(item) => (
-                    <li data-severity={item.severity}>
-                      <strong>{item.severity}</strong>
+                    <li data-severity={item().severity}>
+                      <strong>{item().severity}</strong>
                       <span>
-                        {item.message}
-                        <Show when={item.range}>
+                        {item().message}
+                        <Show when={item().range}>
                           {(range) => (
                             <button
                               type="button"
@@ -1635,7 +1800,7 @@ function Studio() {
                             </button>
                           )}
                         </Show>
-                        <Show when={item.details}>
+                        <Show when={item().details}>
                           {(details) => (
                             <details class="diagnostic-details">
                               <summary>Technical details</summary>
@@ -1652,111 +1817,7 @@ function Studio() {
           </aside>
         </Show>
         <section class="stage" aria-label="Diagram canvas" ref={stage}>
-          <div class="stage-toolbar" aria-label="Canvas controls">
-            <span class="stage-toolbar__label">
-              Canvas{" "}
-              <Show when={ui.stageWidth > 0}>
-                <span class="stage-toolbar__measure">{ui.stageWidth}px</span>
-              </Show>
-            </span>
-            <div class="command-bar" aria-label="Edit controls">
-              <button
-                type="button"
-                class={{ "is-active": placementMode() }}
-                aria-pressed={placementMode() ? "true" : "false"}
-                onClick={() =>
-                  placementMode() ? setPlacementMode(false) : armNodePlacement()
-                }
-                disabled={
-                  !directCanvasAuthoring() ||
-                  !snapshot()?.commands.visualEditing
-                }
-                title={
-                  directCanvasAuthoring()
-                    ? "Place a standalone node (N)"
-                    : "Direct canvas creation currently supports flowcharts and swimlanes."
-                }
-              >
-                Add node
-              </button>
-              <button
-                type="button"
-                onClick={() => void execute({ type: "undo" })}
-                disabled={!snapshot()?.commands.undo}
-                title={
-                  snapshot()?.commands.undo
-                    ? "Undo last edit"
-                    : "Nothing to undo"
-                }
-              >
-                Undo
-              </button>
-              <button
-                type="button"
-                onClick={() => void execute({ type: "redo" })}
-                disabled={!snapshot()?.commands.redo}
-                title={
-                  snapshot()?.commands.redo
-                    ? "Redo last edit"
-                    : "Nothing to redo"
-                }
-              >
-                Redo
-              </button>
-              <button
-                type="button"
-                onClick={() => void execute({ type: "reset-layout" })}
-                disabled={action("reset-layout").state !== "available"}
-                title={actionTitle("reset-layout")}
-              >
-                Reset layout
-              </button>
-            </div>
-            <div class="segmented" aria-label="Zoom controls">
-              <button
-                type="button"
-                aria-label="Zoom out"
-                onClick={() => {
-                  const next = Math.max(0.1, zoom() - 0.1);
-                  updateFit(false);
-                  updateZoom(next);
-                }}
-              >
-                −
-              </button>
-              <span>{Math.round(zoom() * 100)}%</span>
-              <button
-                type="button"
-                aria-label="Zoom in"
-                onClick={() => {
-                  const next = Math.min(2, zoom() + 0.1);
-                  updateFit(false);
-                  updateZoom(next);
-                }}
-              >
-                +
-              </button>
-              <button
-                type="button"
-                aria-label="Fit diagram to screen"
-                onClick={() => {
-                  updateFit(true);
-                }}
-              >
-                Fit
-              </button>
-              <button
-                type="button"
-                aria-label="Show diagram at 100 percent"
-                onClick={() => {
-                  updateFit(false);
-                  updateZoom(1);
-                }}
-              >
-                100%
-              </button>
-            </div>
-          </div>
+          <CanvasToolbar />
           <Show
             when={snapshot()}
             fallback={<div class="canvas-loading">Opening diagram…</div>}
@@ -2101,9 +2162,9 @@ function Studio() {
                       : "Canvas current"}
             </span>
             <span title="Recovery is stored only in this browser. Download .mmd creates a portable copy.">
-              {documentState().workspaceSaving
+              {documentState.workspaceSaving
                 ? "Saving browser recovery…"
-                : documentState().workspaceSaveFailed
+                : documentState.workspaceSaveFailed
                   ? "Browser recovery failed"
                   : "Recovered locally in this browser"}
             </span>

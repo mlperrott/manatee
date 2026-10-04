@@ -22,16 +22,16 @@
     "verify": "pnpm format && pnpm lint && pnpm check:boundaries && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
-    "@solidjs/web": "2.0.0-rc.9",
+    "@solidjs/web": "2.0.0-rc.13",
     "ajv": "8.20.0",
     "elkjs": "0.12.0",
     "mermaid": "11.17.2",
-    "solid-js": "2.0.0-rc.9",
+    "solid-js": "2.0.0-rc.13",
     "yaml": "2.9.1"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
-    "@solidjs/vite-plugin": "3.0.0-next.44",
+    "@solidjs/vite-plugin": "3.0.0-next.47",
     "@types/node": "24.13.6",
     "jsdom": "29.1.1",
     "oxlint": "1.86.0",

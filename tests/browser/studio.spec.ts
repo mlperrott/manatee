@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("protects imported source while exposing presentation controls", async ({
   page,
@@ -120,11 +120,6 @@ test("opens teaching examples beside edited work and restores the workspace", as
 test("creates nodes, groups and connections without typing Mermaid", async ({
   page,
 }) => {
-  const solidDiagnostics: string[] = [];
-  page.on("console", (message) => {
-    if (/\[[A-Z_]+\]/u.test(message.text()))
-      solidDiagnostics.push(message.text());
-  });
   await page.goto("./");
   await expect(page.locator("svg[data-manatee-renderer]")).toBeVisible();
   for (const [id, label] of [
@@ -170,7 +165,6 @@ test("creates nodes, groups and connections without typing Mermaid", async ({
   await expect(page.getByLabel("Diagram source")).toHaveValue(
     /subgraph team[^]*first\[/,
   );
-  expect(solidDiagnostics).toEqual([]);
 });
 
 test("edits typed attributes and complete styling rules", async ({ page }) => {
@@ -186,10 +180,12 @@ test("edits typed attributes and complete styling rules", async ({ page }) => {
   await page.locator('[data-element-id="deliver"]').click();
   await page.getByText("Node attributes", { exact: true }).click();
   await page.getByLabel("Attribute risk", { exact: true }).fill("2");
-  await page.getByLabel("Attribute risk", { exact: true }).blur();
+  const renameRisk = page.getByLabel("Rename attribute risk", { exact: true });
+  await renameRisk.focus();
   await expect(
     page.locator('[data-element-id="deliver"] rect').first(),
   ).toHaveAttribute("fill", "#d7eee6");
+  await expect(renameRisk).toBeFocused();
   await page.getByText("Attributes and styling rules", { exact: true }).click();
   await page.getByRole("button", { name: "Edit rule 2", exact: true }).click();
   await page.getByLabel("Condition 1 value", { exact: true }).fill("1");

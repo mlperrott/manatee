@@ -1,26 +1,28 @@
 # SolidJS 2 prerelease practices for Manatee
 
-Research updated: 2026-10-02. Sources are the Solid project, its release artifacts, and first-party package metadata.
+Research updated: 2026-10-04. Sources are the Solid project, its release artifacts, and first-party package metadata.
 
 ## Version decision input
 
-The Solid 2 prerelease has advanced from beta to release candidate. Manatee pins `solid-js@2.0.0-rc.9`, `@solidjs/web@2.0.0-rc.9`, and the matching compiler plugin as one tested set. The npm `next` tag points to a newer RC line, while the npm `beta` tag for `solid-js` points to the Solid 1 beta line. The Solid team describes the RC interface as frozen while still subject to prerelease bugs. [Solid 2 RC announcement](https://github.com/solidjs/solid/discussions/2995) · [RC.9 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.9) · [plugin releases](https://github.com/solidjs/solid-vite-plugin/releases)
+The Solid 2 prerelease has advanced from beta to release candidate. Manatee pins `solid-js@2.0.0-rc.13`, `@solidjs/web@2.0.0-rc.13`, and `@solidjs/vite-plugin@3.0.0-next.47` as one tested set. The npm `next` tag for core/web points to RC.13, while the npm `beta` tag for `solid-js` points to the Solid 1 beta line. The Solid team describes the RC interface as frozen while still subject to prerelease bugs. [Solid 2 RC announcement](https://github.com/solidjs/solid/discussions/2995) · [RC.13 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.13) · [plugin releases](https://github.com/solidjs/solid-vite-plugin/releases)
 
-On 2026-10-02, Manatee tested RC.13 with `@solidjs/vite-plugin@3.0.0-next.47`. Type checking, unit tests, build, and 150 browser tests passed, but the new runtime emitted repeated development diagnostics for wasted recomputation, unstable list identity, and hot scopes across editor workflows. The RC.9 tuple remains pinned until those findings can be evaluated without weakening the browser diagnostic gate. [RC.13 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.13)
+On 2026-10-02, Manatee tested RC.13 with `@solidjs/vite-plugin@3.0.0-next.47`. Type checking, unit tests, build, and 150 browser tests passed, but the new runtime emitted repeated development diagnostics for wasted recomputation, unstable list identity, and hot scopes across editor workflows. That evaluation retained RC.9 pending diagnostic cleanup. [RC.13 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.13)
+
+The October 4 upgrade addresses those findings at the UI boundary. A shallow Solid store exposes individual immutable snapshot fields without wrapping engine records; workspace tabs publish only their displayed identifier, filename and dirty state, and command availability has field-level tracking. Equivalent selected-ID arrays retain their reference. Inspector derivations are memoized, arrangement validation retains its movement plan for preview reuse, attribute rows use attribute-name keys, and diagnostic rows use positional accessors. The examples dialog opens on the next animation frame, after DOM insertion. The export menu and canvas toolbar own separate reactive scopes. Zoom invalidates the SVG only when the selection has scale-sensitive handles. Every browser workflow now uses the shared console diagnostic gate; development diagnostics and performance tracks retain their default settings. The attribute-editing workflow also verifies that editing a value preserves focus in the next field.
 
 The aligned browser build stack on the research date is:
 
 | Package | Pin | Role |
 | --- | --- | --- |
-| `solid-js` | `2.0.0-rc.9` | Reactive core, stores, and control flow |
-| `@solidjs/web` | `2.0.0-rc.9` | DOM runtime and JSX types |
-| `@solidjs/vite-plugin` | `3.0.0-next.44` | Solid 2 compiler and Vite integration |
+| `solid-js` | `2.0.0-rc.13` | Reactive core, stores, and control flow |
+| `@solidjs/web` | `2.0.0-rc.13` | DOM runtime and JSX types |
+| `@solidjs/vite-plugin` | `3.0.0-next.47` | Solid 2 compiler and Vite integration |
 | `vite` | `8.3.1` | Development and production build |
 | `typescript` | `7.0.2` | Type checking |
 
-`@solidjs/vite-plugin@3.0.0-next.44` requires the RC.9 core/web pair and Vite 8 or 9. Its compiler output requires the matching runtime. It uses Solid's OXC-based compiler by default. [Plugin compatibility notes](https://github.com/solidjs/solid-vite-plugin/releases/tag/%40solidjs%2Fvite-plugin%403.0.0-next.44) · [Plugin documentation](https://github.com/solidjs/solid-vite-plugin)
+`@solidjs/vite-plugin@3.0.0-next.47` is paired with the RC.13 core/web packages. Its compiler output requires the matching runtime. It uses Solid's OXC-based compiler by default. [Plugin release](https://github.com/solidjs/solid-vite-plugin/releases/tag/%40solidjs%2Fvite-plugin%403.0.0-next.47) · [Plugin documentation](https://github.com/solidjs/solid-vite-plugin)
 
-The plugin and core declare prerelease ranges for `@solidjs/compiler`, `@solidjs/babel-plugin`, and `@solidjs/signals`. `pnpm-workspace.yaml` pins those three to RC.9 because a fresh lockfile resolution can otherwise combine the RC.9 runtime with newer compiler or signals packages. Update all five Solid pins and these overrides together when revisiting the newer RC.
+The plugin and core declare prerelease ranges for `@solidjs/compiler`, `@solidjs/babel-plugin`, and `@solidjs/signals`. `pnpm-workspace.yaml` pins those three to RC.13 because a fresh lockfile resolution can otherwise combine the runtime with newer compiler or signals packages. Update the core/web/plugin pins and these three overrides together.
 
 ## Build shape for Manatee
 
@@ -53,6 +55,8 @@ Import reactive primitives, stores, and renderer-neutral component types from `s
 
 ### Local verification
 
+On 2026-10-04, the RC.13 upgrade passed `pnpm verify` (format, lint, boundaries, type checking, 135 unit tests, and production build) and the full browser diagnostic gate (164 passed, 5 existing conditional skips). The production preview at `/manatee/`, without the test-only isolation headers, passed the deployed-style Chromium and iPhone smoke workflows (22 passed, 2 existing touch-API skips). Live GitHub Pages verification remains the deployment workflow’s responsibility.
+
 Manatee was type-checked, unit-tested, browser-tested, and built with the pins above. The production build emits `dist/client/index.html` with `/manatee/` asset URLs. Client start mode's local-development base-path request returned 404 when last checked on 2026-09-26, so `vite.config.ts` keeps the regular Vite SPA entry for `serve` and start mode for `build` and `preview`.
 
 ## Idiomatic Solid 2 rules
@@ -61,7 +65,7 @@ The [Solid 2 cheatsheet](https://github.com/solidjs/solid/blob/next/packages/sol
 
 ### State and derivation
 
-- Keep the framework-neutral document engine as the source of semantic truth. Represent its immutable UI snapshot with a signal. Use a store for genuinely fine-grained, mutable editor UI state such as panel state and selection.
+- Keep the framework-neutral document engine as the source of semantic truth. Expose its immutable UI snapshot through a shallow store, so each top-level field is reactive while nested engine records remain raw. Copy the frozen snapshot into a plain root object before passing it to the store setter; do not mutate engine records. Use a store for genuinely fine-grained, mutable editor UI state such as panel state and selection.
 - Derive values with `createMemo`; do not mirror derived values into writable signals.
 - Store setters are draft-first: mutate the supplied draft. Use `snapshot(store)` when a plain non-reactive value is needed for persistence or a worker message.
 - Updates are automatically microtask-batched. A read immediately after a setter sees the previous committed value. Use the value returned by the document-engine command in application code; reserve `flush()` for tests or rare imperative synchronization.
@@ -105,6 +109,10 @@ The [Solid 2 cheatsheet](https://github.com/solidjs/solid/blob/next/packages/sol
 
 RC.9 also diagnoses asynchronous store setters, because draft setters are synchronous transactions, and adds a client error reporting hook for errors contained by `<Errored>`. Manatee keeps every store setter synchronous, places an `<Errored>` recovery boundary around Studio, and has a browser workflow fail on any structured Solid diagnostic written to the console. [RC.9 release](https://github.com/solidjs/solid/releases/tag/solid-js%402.0.0-rc.9)
 
+### Diagnostic timing in browser tests
+
+The browser suite runs with one worker so CPU contention between browsers does not consume Solid's millisecond compute budgets. Its dedicated Vite server enables cross-origin isolation through COOP/COEP headers using `MANATEE_BROWSER_TESTS=1`; it does not reuse an existing development server. A test-only middleware applies the headers before cache handling, because Vite's `server.headers` misses early `304` responses and WebKit then blocks cached layout workers. A local timing probe measured 1 ms `performance.now()` granularity in Firefox and WebKit without isolation, versus approximately 0.02 ms with isolation. That rounding matters for Solid's default 2 ms wasted-computation budget. This changes measurement precision, not warning thresholds or the console assertion. Ordinary development and production builds do not receive those test-only headers; the production preview smoke checks exercise the normal deployment environment.
+
 ## Capability fit
 
 The migration uses each Solid 2 capability where it matches Manatee's architecture:
@@ -118,6 +126,6 @@ Current test pins are `vitest@5.0.3` and `@playwright/test@1.63.0`. Component te
 
 ## Architecture consequence
 
-Use Solid 2 RC.9 and its aligned web/compiler packages. This changes the UI adapter and reactive orchestration, not the deeper rendering architecture: the framework-neutral document engine, version-pinned Mermaid family adapters, YAML source preservation, ELK worker, manual-position reconciliation, orthogonal routing, SVG scene, exports, IndexedDB storage, and GitHub Pages deployment remain valid.
+Use Solid 2 RC.13 and its aligned web/compiler packages. This changes the UI adapter and reactive orchestration, not the deeper rendering architecture: the framework-neutral document engine, version-pinned Mermaid family adapters, YAML source preservation, ELK worker, manual-position reconciliation, orthogonal routing, SVG scene, exports, IndexedDB storage, and GitHub Pages deployment remain valid.
 
 Use Solid as a thin reactive view over document-engine snapshots and commands. Keeping Mermaid, layout, routing, persistence, and export rules outside Solid components prevents prerelease framework churn from reaching the core and makes the most consequential behavior testable without a browser component tree.
